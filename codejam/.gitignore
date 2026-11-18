@@ -15,3 +15,7 @@ server/.env.hosted
 
 media/nexconn.js
 media/nexconn.js.map
+
+server/public/call.js
+server/public/auth.js
+server/public/*.map

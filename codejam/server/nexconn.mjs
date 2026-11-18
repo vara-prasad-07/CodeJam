@@ -26,7 +26,11 @@ export function createNexconnService({ appKey = process.env.NEXCONN_APP_KEY, app
    if (typeof data.accessToken !== 'string') { throw new Error('Nexconn returned no access token.'); }
    return { appKey: appKey.trim(), token: data.accessToken, userId: user.id, region };
   },
-  createGroup: room => call('/v4/group-channel/create', { channelId: room.channelId, name: room.name, owner: room.members[0].id, permissions: { joinPerm: 3, memInvitePerm: 0 } }),
+  async createGroup(room) {
+   await call('/v4/group-channel/create', { channelId: room.channelId, name: room.name, owner: room.members[0].id, permissions: { joinPerm: 3, memInvitePerm: 0 } });
+   // Ownership alone does not guarantee chat/history membership.
+   await call('/v4/group-channel/join', { channelId: room.channelId, userIds: [room.members[0].id] });
+  },
   joinGroup: (room, user) => call('/v4/group-channel/join', { channelId: room.channelId, userIds: [user.id] }),
   dismissGroup: room => call('/v4/group-channel/dismiss', { channelId: room.channelId }),
  };

@@ -28,6 +28,7 @@ try {
  room={channelId:id(),name:'CodeJam SDK verification',members:users};
  await service.createGroup(room);await service.joinGroup(room,users[1]);console.log('Live Nexconn: group created and second user joined');
  const a=await client(sessions[0]),b=await client(sessions[1]);console.log('Live Nexconn: two real SDK clients connected');
+ const ownerHistory=await a.call('history',{channelId:room.channelId});assert.ok(Array.isArray(ownerHistory.messages));console.log('Live Nexconn: creator group membership and history verified');
  const attachment={path:'src/example.ts',code:'export const verified = true;',line:1,endLine:1,branch:'main',commit:'test'};
  const sent=await a.call('send',{channelId:room.channelId,text:'CodeJam Nexconn SDK integration check',clientId:id(),attachment});
  assert.ok(sent.id);console.log('Live Nexconn: SDK send acknowledged');

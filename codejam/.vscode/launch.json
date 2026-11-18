@@ -18,19 +18,10 @@
     },
     {
       "name": "Run Extension - Person 2",
-      "type": "extensionHost",
+      "type": "node",
       "request": "launch",
-      "runtimeExecutable": "${execPath}",
-      "args": [
-        "--extensionDevelopmentPath=${workspaceFolder}",
-        "--user-data-dir=${env:TEMP}/codejam-person-2-debug",
-        "--disable-extensions",
-        "${workspaceFolder}"
-      ],
-      "outFiles": [
-        "${workspaceFolder}/dist/**/*.js"
-      ],
-      "preLaunchTask": "${defaultBuildTask}"
+      "program": "${workspaceFolder}/scripts/person2.cjs",
+      "console": "internalConsole"
     }
   ],
   "compounds": [
@@ -40,7 +31,7 @@
         "Run Extension",
         "Run Extension - Person 2"
       ],
-      "stopAll": true
+      "stopAll": false
     }
   ]
 }

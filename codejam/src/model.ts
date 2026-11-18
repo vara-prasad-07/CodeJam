@@ -1,8 +1,13 @@
 ﻿import { randomUUID } from 'node:crypto';
 import type { Repository } from './repository';
-export interface Attachment { path: string; line: number; endLine: number; code: string; branch: string; commit: string }
-export interface ChatMessage { id: string; author: string; userId: string; text: string; createdAt: string; attachment?: Attachment; replyTo?: string; clientId?: string }
-export interface Room { id: string; channelId?: string; name: string; repository: string; createdAt: string; messages: ChatMessage[]; members: { id: string; name: string }[]; invite?: string; hasMore?: boolean }
+export interface Attachment { path: string; line: number; endLine: number; code: string; branch: string; commit: string; repository?: string }
+export interface ChatMessage { id: string; author: string; userId: string; text: string; createdAt: string; attachment?: Attachment; replyTo?: string; clientId?: string; discussionId?: string; mentions?: string[]; reviewedDraft?: boolean }
+export interface Room { id: string; channelId?: string; name: string; repository: string; createdAt: string; messages: ChatMessage[]; members: { id: string; name: string }[]; invite?: string; hasMore?: boolean; repositoryIdentity?: string; inviteExpiresAt?: number; pins?: Decision[]; discussions?: Discussion[]; reactions?: Reaction[]; presence?: Presence[]; call?: CallState | null }
+export interface Decision { id: string; title: string; text: string; source: ChatMessage; discussionId?: string; createdAt: string; pinnedBy: string }
+export interface Discussion { id: string; title: string; source: ChatMessage; status: 'open' | 'resolved'; createdAt: string; updatedAt: string; resolvedBy?: string }
+export interface Reaction { id: string; values: Record<string, string[]> }
+export interface Presence { id: string; name: string; focus: string; lastSeen: number }
+export interface CallState { callId: string; startedAt: string; hostId: string; participants: { id: string; name: string; muted: boolean; status: string; lastSeen: number }[] }
 export interface LocalState { rooms: Room[]; active?: string }
 export function createRoom(name: unknown, repo: Repository, user: { id: string; name: string }): Room {
  if (typeof name !== 'string' || !name.trim() || name.trim().length > 64) { throw new Error('Enter a room name of 1–64 characters.'); }
@@ -15,7 +20,7 @@ export function createMessage(input: Record<string, unknown>, user: { id: string
  if (input.attachment) {
   const a = input.attachment as Attachment;
   if (typeof a.path !== 'string' || /(^[\\/]|^[a-z]:|(^|[\\/])\.\.([\\/]|$))/i.test(a.path) || typeof a.code !== 'string' || a.code.length > 12000 || !Number.isInteger(a.line) || !Number.isInteger(a.endLine) || a.line < 1 || a.endLine < a.line || typeof a.branch !== 'string' || typeof a.commit !== 'string') { throw new Error('Invalid code attachment.'); }
-  attachment = { path: a.path, code: a.code, line: a.line, endLine: a.endLine, branch: a.branch, commit: a.commit };
+  attachment = { path: a.path, code: a.code, line: a.line, endLine: a.endLine, branch: a.branch, commit: a.commit, repository: typeof a.repository === 'string' ? a.repository.slice(0, 500) : undefined };
  }
  if (!text && !attachment) { throw new Error('Write a message or attach selected code.'); }
  const replyTo = typeof input.replyTo === 'string' ? input.replyTo : undefined;

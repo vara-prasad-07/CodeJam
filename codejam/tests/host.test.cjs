@@ -8,7 +8,7 @@ const {createRequire}=require('node:module');
 
 test('extension shares one SDK connection across views and sends exclusively through the SDK bridge',async t=>{
  const folder=fs.mkdtempSync(path.join(os.tmpdir(),'codejam-host-'));t.after(()=>fs.rmSync(folder,{recursive:true,force:true}));
- const commands=new Map(),stores={workspace:new Map(),global:new Map(),secret:new Map()},views=[];let provider,room=null;
+ const commands=new Map(),stores={workspace:new Map(),global:new Map(),secret:new Map([['codejam.session.nexconn.http://127.0.0.1:3000','application-session']])},views=[];let provider,room=null;
  const disposable=()=>({dispose(){}});
  const makeStore=store=>({get:(key,fallback)=>store.has(key)?store.get(key):fallback,update:async(key,value)=>store.set(key,value)});
  const context={subscriptions:[],extensionUri:{fsPath:folder},workspaceState:makeStore(stores.workspace),globalState:makeStore(stores.global),secrets:{get:async key=>stores.secret.get(key),store:async(key,value)=>stores.secret.set(key,value),delete:async key=>stores.secret.delete(key)}};
@@ -20,12 +20,15 @@ test('extension shares one SDK connection across views and sends exclusively thr
   }return true;}};
   const view={webview,posts,onDidDispose(fn){disposeListener=fn;return disposable();},receive:data=>listener(data),close:()=>disposeListener?.()};views.push(view);return view;
  };
- const vscode={ViewColumn:{One:1},workspace:{workspaceFolders:[{name:'repo',uri:{fsPath:folder}}],getConfiguration:()=>({get:(key,fallback)=>key==='displayName'?'Vara':fallback}),onDidChangeWorkspaceFolders:disposable,onDidChangeConfiguration:disposable},window:{registerWebviewViewProvider(_id,p){provider=p;return disposable();},createWebviewPanel(){return makeView();},showInformationMessage:async()=>undefined},commands:{registerCommand(id,fn){commands.set(id,fn);return disposable();},executeCommand:async()=>undefined},Uri:{joinPath:(root,...parts)=>({fsPath:path.join(root.fsPath,...parts)})}};
+ const vscode={ViewColumn:{One:1},workspace:{registerTextDocumentContentProvider:disposable,workspaceFolders:[{name:'repo',uri:{fsPath:folder}}],getConfiguration:()=>({get:(key,fallback)=>key==='displayName'?'Vara':fallback}),onDidChangeWorkspaceFolders:disposable,onDidChangeConfiguration:disposable},window:{registerWebviewViewProvider(_id,p){provider=p;return disposable();},createWebviewPanel(){return makeView();},showInformationMessage:async()=>undefined},commands:{registerCommand(id,fn){commands.set(id,fn);return disposable();},executeCommand:async()=>undefined},Uri:{joinPath:(root,...parts)=>({fsPath:path.join(root.fsPath,...parts)})}};
  const calls=[];const fakeFetch=async(url,options)=>{
   const route=new URL(url).pathname;calls.push(route);let data;
   if(route==='/sessions'){data={token:'application-session'};}
   else if(route==='/chat/session'){data={appKey:'public-key',token:'user-nexconn-token',userId:'me',region:'SG'};}
   else if(route==='/rooms'&&options.method==='POST'){room={id:'room1',channelId:'group1',name:'Room',repository:'repo',messages:[],members:[{id:'me',name:'Vara'}]};data={room};}
+  else if(route.endsWith('/details')){data={pins:[],discussions:[],reactions:[],presence:[],call:null};}
+  else if(route.endsWith('/chat-membership')){data={ok:true};}
+  else if(route.endsWith('/presence')){data={ok:true};}
   else if(route==='/rooms'){data={userId:'me',rooms:room?[room]:[]};}
   else{throw new Error('Unexpected HTTP route '+route);}
   return {ok:true,json:async()=>data};

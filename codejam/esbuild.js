@@ -24,6 +24,7 @@ const esbuildProblemMatcherPlugin = {
 };
 
 async function main() {
+	const surfaces = await esbuild.context({entryPoints: { call: 'src/callPage.mts', auth: 'src/authPage.ts' }, bundle:true, platform:'browser', format:'iife', outdir:'server/public', minify:production, alias:{ path:require.resolve('path-browserify') }, logLevel:'silent'});
 	const client = await esbuild.context({
 		entryPoints: ['src/nexconnClient.ts'], bundle: true, platform: 'browser',
 		alias: { path: require.resolve('path-browserify') },
@@ -49,9 +50,12 @@ async function main() {
 		],
 	});
 	if (watch) {
+		await surfaces.watch();
 		await client.watch();
 		await ctx.watch();
 	} else {
+		await surfaces.rebuild();
+		await surfaces.dispose();
 		await client.rebuild();
 		await client.dispose();
 		await ctx.rebuild();

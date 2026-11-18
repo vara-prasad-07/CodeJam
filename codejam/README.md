@@ -1,84 +1,76 @@
-﻿# CodeJam — Nexconn rooms and chat
+# CodeJam
 
-CodeJam is a VS Code extension based on `screen_main.png` and `screen-1.png`. It detects local Git context, creates a real Nexconn group for each room, and uses **`@nexconn/chat` 26.2.1** to send/receive messages and load cloud history. Discussion detail (`screen-2.png`) remains deferred.
+VS Code collaboration with repository context, Nexconn chat/audio, Firestore discussions and decisions, Firebase sign-in, and reviewed Gemini drafts.
 
-## Run
+## Run next time
 
-1. Open this **`codejam` folder** in VS Code and run `npm install`.
-2. Configure **`codejam/server/.env`** with the Nexconn keys. Your existing `.env` is the file the server reads; keep your configured values.
-
-```dotenv
-NEXCONN_APP_KEY=your_app_key
-NEXCONN_APP_SECRET=your_app_secret
-# Optional; defaults to Singapore. Must match your Nexconn application.
-NEXCONN_REGION=SG
-PORT=3000
-```
-
-3. Run `npm run server` in a terminal inside `codejam`. Keep it running.
-4. Run `npm run compile`, then press **F5 → Run Extension**.
-5. In the Extension Development Host, open the **project folder you want to collaborate on**. Click the CodeJam activity icon or run **CodeJam: Open Full View**.
-6. In **Connect**, enter a room name, click **Create Room**, then **Open project chat**. The header displays **NEXCONN LIVE** only when the SDK is connected.
-
-VS Code User Settings default to:
-
-```json
-{
-  "codejam.apiUrl": "http://127.0.0.1:3000",
-  "codejam.displayName": "Developer"
-}
-```
-
-If you previously explicitly set `codejam.apiUrl` to an empty string, change it to the backend URL. Set your display name before first connection. Use a second VS Code profile/user-data directory and another display name for a second participant. Windows sharing a profile share an identity.
-
-## What uses Nexconn
-
-- **User tokens:** the backend signs Nexconn's `/v4/auth/access-token/issue` request with the App Secret. The extension gets a per-user token and the public App Key; the App Secret stays in the backend process.
-- **Rooms:** Create Room calls Nexconn's group creation API. Joining through an invitation adds the user to that Nexconn group through the backend. Direct SDK group joins are disabled; invitations are validated by CodeJam first.
-- **Messages:** the bundled Chat SDK runs in a VS Code webview and uses `NCEngine.initialize`, `NCEngine.connect`, `GroupChannel.sendMessage`, and `MessageHandler.onMessageReceived`. The sidebar and full view share one SDK connection in the extension host bridge.
-- **History:** `BaseChannel.createMessagesQuery` loads Nexconn cloud history, 50 messages at a time. Use **Load earlier messages** to paginate. Live messages arrive through the SDK; they are not polled from the backend.
-- **Code/replies:** Nexconn text-message `extra` carries a versioned CodeJam payload with code excerpt, path, lines, branch, commit, reply target and client request ID. Message author is derived from the sender's user ID and room membership.
-
-There is **no local chat fallback**. Invalid credentials, SDK/network failures and history errors produce a visible error. A send is successful only after Nexconn acknowledges it. Failed sends retain the draft. Acknowledged retries in the same SDK lifetime are deduplicated; delivery with an uncertain acknowledgement across a full client restart is not an exactly-once guarantee.
-
-The backend stores **room/member/invitation metadata and hashed development session credentials**, not chat history or Nexconn user tokens, in ignored `server/.data/nexconn-rooms.json`. Old local-preview rooms are not converted to Nexconn groups; their earlier storage is left untouched. Create a new Nexconn room.
-
-## Nexconn Console
-
-Use keys from the **same Nexconn application and environment**. Enable Chat/group channels and cloud message history. The configured keys have been verified against the Singapore API (`NEXCONN_REGION=SG`). Other supported configured regions are `NA` and `SA`; both backend and SDK use the selected region.
-
-Official references: [initialize](https://docs.nexconn.ai/chatsdk-web/init), [connect](https://docs.nexconn.ai/chatsdk-web/connection/connect), [signed API requests](https://docs.nexconn.ai/platform-chat-api/prepare-to-use-api/auth), [user token issuance](https://docs.nexconn.ai/platform-chat-api/user/register), [group creation](https://docs.nexconn.ai/platform-chat-api/group-channel/managing-channels/create-group).
-
-`server/.env.example` is the current backend configuration template. `server/.env.hosted.example` documents future Supabase/Gemini settings; those services are not connected yet and that file is not loaded. **No Supabase or Gemini key is required for the current Nexconn chat integration.** Both remain in the original roadmap for hosted account authentication/metadata and AI.
-
-## Invite and chat
-
-Create a room, copy its invitation code from Connect or Team, then choose **Connect → Join with invite** in the second profile. Both profiles must use the same CodeJam backend URL and Nexconn application. The included backend listens on **127.0.0.1** for development on one machine. Remote teammates need a hosted HTTPS backend; Supabase sign-in and production account controls are still pending.
-
-- Send with **Send** or **Ctrl / Cmd + Enter**; Enter inserts a newline.
-- Select code in an editor and click the `{}` attachment icon. Review it, then send. Secret/environment files and files outside the linked repository are rejected.
-- **Open in editor** opens the repository-relative reference. Chat retains the saved excerpt when your checkout differs.
-- **Reply** quotes a message in the room conversation. Dedicated threads belong to the later screen-2 phase.
-- Use **Rooms** to switch rooms and **Team** for actual membership and invitations. Member metadata refreshes every 10 seconds; messages arrive in real time.
-- **Reconnect** obtains a fresh user token when the SDK is disconnected. If server data was reset or you need a new display name, retain your invitation code and run **CodeJam: Reset Server Session**, then rejoin.
-
-The development session is an unverified display-name identity, not Supabase sign-in. Session credentials are held in VS Code SecretStorage. Do not expose the development API as a production account system.
-
-## Repository detection
-
-Git is read locally: repository root, branch, HEAD, latest commit subject/author/date and working-tree status. Nested packages, detached HEAD and empty repositories are supported. Choose among workspace folders with the top repository selector. Metadata refreshes every 10 seconds; **Refresh/Reconnect** also refreshes it. Git must be on PATH; no GitHub API token is needed.
-
-## Verification
-
-Use Node.js 22.16+ for the server and tests.
+From the outer **CodeJam** folder:
 
 ```powershell
-npm test
-npm run package
-# Opt-in live Nexconn integration check using server/.env:
-npm run test:nexconn
+npm --prefix codejam install
+npm --prefix codejam run compile
+npm --prefix codejam run server
 ```
 
-The eleven automated tests cover API signing, secret isolation, provider failures without fallback, group/membership routing, metadata persistence, SDK send/receive/history, acknowledged retry behavior, Git states, create/chat/join UI wiring, retained drafts, and escaped content. The live check connects two real SDK clients, creates/joins a group, sends and receives code context and replies, queries cloud history, then recreates a client to restore history. It removes its temporary group; its two test identities remain registered in the Nexconn app.
+Keep the backend running. In **Run and Debug**, select **CodeJam - Two People** and press **F5**. For only the second independent window:
 
-The SDK network test runs in a DOM harness. Actual VS Code visual QA remains separate; browser/native UI access was unavailable in this environment. AI, calls, decisions, reactions, rich Markdown and screen-2 remain deferred.
+```powershell
+npm --prefix codejam run test:person2
+```
+
+In each development window open the project checkout and run **CodeJam: Open Full View**. Sign in with **different Firebase accounts**. Create a room in A, copy its invitation, and join in B. Both windows use the same backend. Changing a display name does not create another account. Inside the inner `codejam` folder omit `--prefix codejam`. Restart the backend after `.env` changes.
+
+## Credentials
+
+The backend reads **server/.env**; keep your existing values private. See [the template](server/.env.example).
+
+| Setting | Purpose |
+| --- | --- |
+| `NEXCONN_APP_KEY`, `NEXCONN_APP_SECRET` | Nexconn identities, groups, chat and calls |
+| `NEXCONN_REGION` | SG (default), NA or SA; match your application |
+| `apiKey`, `authDomain`, `projectId`, `appId` | Firebase web configuration; uppercase `FIREBASE_*` equivalents supported |
+| `GEMINI_API_KEY` | Private AI drafts |
+| `GEMINI_MODEL` | Optional text model; otherwise discovered automatically |
+| `HOST`, `PORT` | Defaults to 127.0.0.1:3000 |
+
+Current Firebase, Nexconn and Gemini credentials passed live integration testing. No additional key is required for the local workflow. Enable Email/Password and Google in Firebase Authentication. Add **localhost** to Authentication > Settings > Authorized domains for Google. Enable audio calling for the Nexconn application if needed.
+
+Google opens your browser at `http://localhost:3000/signin`. Complete the popup and return to VS Code. A short-lived one-time request transfers the verified identity. The extension saves its own opaque session in VS Code SecretStorage, never your password. Sessions expire after 30 days.
+
+## Features
+
+- Connect: create/join rooms, expiring invitations and renewal, repository identity, branch, latest commit/author/time, dirty status and account-based room restoration.
+- Chat: actual Nexconn SDK send/receive, cloud history pagination, replies, mentions (`@First_Last`), selected code and failed-send draft retention. Sidebar/full view share one SDK connection.
+- Discussions: persistent threads, replies, resolve/reopen, reactions, path/lines/branch/commit, revision warnings, saved excerpt versus working-copy diff and local file opening.
+- Decisions: pin a message/thread, search title/text/path, inspect its source and unpin with confirmation.
+- AI: ask `@agent` or use a message action. Choose code, messages and optional local Git diff. Preview context, generate a private draft, review/edit, then explicitly send under your name. Generation never posts automatically.
+- Team: recent presence with project-relative editor focus, member roster, actual call state and mini controls.
+- Audio: actual Nexconn Call SDK in a separate browser page for microphone access. Separate call identities keep editor chat connected. Start/join, allow microphone and keep the tab open. VS Code mute/leave controls operate your browser session.
+
+Use **Share Selection with Team** in the editor context menu or attach selected code from the composer. Environment/private-key file selection is blocked. Diff context excludes common credential filenames. Review the preview yourself: these checks are not a comprehensive secret scanner. Shared references never execute code or modify files.
+
+## Data and access
+
+Firestore stores accounts, hashed application sessions, rooms/membership, discussions, pins, reactions, presence and call controls/state. Nexconn stores chat history and message payloads. Firestore retains pinned/thread-root snapshots so context survives history pagination. Gemini receives selected context on generation.
+
+Existing Nexconn metadata from `server/.data/nexconn-rooms.json` migrates once; the original stays untouched. Existing development sessions can **Link an account** to retain identity/memberships. Already established Firebase accounts retain their own identity; there is no automatic account merge. Pre-Nexconn preview rooms are not converted.
+
+**Deployment limit:** the Firestore REST adapter uses your web API key and open database rules as requested for the prototype. Backend membership checks do not prevent direct database access under open rules. This is not production-private storage. Public deployment needs server-authenticated Firestore access and locked rules; a Firebase Admin/service-account adapter has not been configured. Keep localhost binding for this setup. Remote use also needs HTTPS, `codejam.apiUrl`, matching `CODEJAM_PUBLIC_URL` and an authorized Firebase domain.
+
+No automatic local database or messaging fallback exists. Acknowledged sends are deduplicated within a client lifetime; uncertain acknowledgements across a reload are not an exactly-once guarantee. Presence refreshes every 10 seconds and expires after 45 seconds. Metadata queries cap at 500 records per collection; rooms support 50 members.
+
+## Verification and packaging
+
+```powershell
+npm run compile
+npm test
+npm run test:nexconn
+npm run test:project
+npm run vsix
+```
+
+Automated tests cover membership, persistence, failures, AI context boundaries, SDK bridging and UI flow. Opt-in live tests consume provider quota. `test:project` creates disposable Firebase accounts, an isolated Firestore namespace and a temporary Nexconn group, verifies actual chat/thread history, decisions, Gemini and backend restart, then cleans up. It does not place an audio call.
+
+Install the generated VSIX through **Extensions > ... > Install from VSIX**. Run the backend separately. The VSIX excludes credentials, backend files and test data. The package is unpublished; `codejam-team` is a local package publisher identifier.
+
+See [DEMO.md](DEMO.md) for acceptance steps. Google popup, rendered layout and two-way microphone/audio still need manual verification because computer/browser access was unavailable. Public hosting, Marketplace publication and demo video upload have not been performed.

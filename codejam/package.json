@@ -1,8 +1,8 @@
 {
   "name": "codejam",
   "displayName": "CodeJam",
-  "description": "Repository-aware project rooms, team chat, and code sharing inside VS Code.",
-  "version": "0.0.1",
+  "description": "Team chat, code discussions, decisions, reviewed AI handoffs, and Nexconn audio inside VS Code.",
+  "version": "1.0.0",
   "engines": {
     "vscode": "^1.146.0"
   },
@@ -42,6 +42,10 @@
       {
         "command": "codejam.resetSession",
         "title": "CodeJam: Reset Server Session"
+      },
+      {
+        "command": "codejam.shareSelection",
+        "title": "CodeJam: Share Selection with Team"
       }
     ],
     "configuration": {
@@ -61,6 +65,15 @@
           "description": "Your chat display name. For shared rooms, reset the server session after changing your name."
         }
       }
+    },
+    "menus": {
+      "editor/context": [
+        {
+          "command": "codejam.shareSelection",
+          "when": "editorHasSelection && resourceScheme == file",
+          "group": "navigation@20"
+        }
+      ]
     }
   },
   "scripts": {
@@ -79,7 +92,10 @@
     "test:server": "node --test server/*.test.mjs",
     "test:base": "npm run compile-tests && node --test tests/*.test.cjs server/*.test.mjs",
     "test:extension": "vscode-test",
-    "test:nexconn": "npm run package && node --env-file=server/.env tests/live-nexconn.mjs"
+    "test:nexconn": "npm run package && node --env-file=server/.env tests/live-nexconn.mjs",
+    "test:person2": "node scripts/person2.cjs",
+    "test:project": "npm run package && node --env-file=server/.env tests/live-project.mjs",
+    "vsix": "vsce package --no-dependencies --skip-license --baseContentUrl https://github.com/vara-prasad-07/CodeJam/blob/main/codejam --baseImagesUrl https://github.com/vara-prasad-07/CodeJam/raw/main/codejam"
   },
   "devDependencies": {
     "@types/mocha": "^10.0.10",
@@ -87,6 +103,7 @@
     "@types/vscode": "^1.146.0",
     "@vscode/test-cli": "^0.0.15",
     "@vscode/test-electron": "^3.0.0",
+    "@vscode/vsce": "^4.1.1",
     "esbuild": "^0.28.1",
     "eslint": "^10.5.0",
     "jsdom": "^31.0.1",
@@ -97,7 +114,8 @@
   },
   "overrides": {
     "diff": "^8.0.4",
-    "serialize-javascript": "^7.0.6"
+    "serialize-javascript": "^7.0.6",
+    "@grpc/grpc-js": "^1.14.7"
   },
   "capabilities": {
     "untrustedWorkspaces": {
@@ -106,6 +124,16 @@
     }
   },
   "dependencies": {
-    "@nexconn/chat": "^26.2.1"
+    "@nexconn/call": "26.2.1",
+    "@nexconn/chat": "26.2.0",
+    "@nexconn/engine": "26.2.0",
+    "firebase": "^13.4.0"
+  },
+  "publisher": "codejam-team",
+  "license": "UNLICENSED",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/vara-prasad-07/CodeJam.git",
+    "directory": "codejam"
   }
 }

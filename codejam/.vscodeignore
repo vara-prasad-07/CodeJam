@@ -16,3 +16,6 @@ vsc-extension-quickstart.md
 server/**
 BASE_PLAN.md
 tests/**
+
+scripts/**
+DEMO.md

@@ -45,3 +45,22 @@ test('Polling preserves focused draft and escapes remote messages; invite join i
  h.emit({...h.state,active:'r',rooms:[room]});assert.equal(h.q('#compose').value,'WIP');assert.equal(h.w.document.activeElement.id,'compose');assert.equal(h.q('#compose').selectionStart,1);assert.equal(h.q('.messages script'),null);assert.equal(h.q('.messages img'),null);
  h.click('[data-tab="connect"]');h.emit({...h.state,active:'r',rooms:[room],mode:'nexconn',connected:true,connection:'Connected to Nexconn'});h.click('[data-connect="join"]');h.input('#invite','cdj-code');h.submit('#join-form');assert.equal(h.requests.at(-1).type,'joinRoom');assert.equal(h.requests.at(-1).invite,'cdj-code');
 });
+
+test('AI requires preview, keeps its draft private, and sends only after review',t=>{
+ const h=setup(t),r={id:'r',name:'Room',members:[{id:'me',name:'Me'}],messages:[{id:'m',userId:'me',author:'Me',text:'Investigate the export',createdAt:new Date().toISOString()}]};
+ h.emit({...h.state,active:'r',rooms:[r],aiConfigured:true});h.click('[data-action="openChat"]');h.click('[data-action="agent"]');
+ assert.equal(h.q('[data-action="generateDraft"]').disabled,true);
+ h.click('[data-action="previewContext"]');const preview=h.requests.at(-1);assert.equal(preview.type,'prepareContext');assert.equal(preview.includeDiff,false);
+ h.emit({type:'contextPreview',context:{messages:[{text:'Investigate the export'}]},contextId:'ctx'});h.ack(preview);
+ h.click('[data-action="generateDraft"]');const generate=h.requests.at(-1);assert.equal(generate.contextId,'ctx');
+ h.emit({type:'draft',text:'Private draft for review',model:'test-model'});h.ack(generate);
+ assert.equal(h.requests.filter(x=>x.type==='send').length,0);
+ h.input('#review-draft','Edited and reviewed draft');h.click('[data-action="sendReviewed"]');assert.equal(h.requests.at(-1).text,'Edited and reviewed draft');assert.equal(h.requests.at(-1).reviewedDraft,true);
+});
+
+test('Firebase password remains transient across refresh and is never persisted in webview state',t=>{
+ const h=setup(t);h.emit({...h.state,authenticated:false});h.input('#auth-email','person@example.com');h.input('#auth-password','transient-password');
+ h.emit({...h.state,authenticated:false,connection:'Please sign in'});assert.equal(h.q('#auth-password').value,'transient-password');
+ assert.equal(JSON.stringify(h.saved()).includes('transient-password'),false);
+ h.submit('#auth-form');assert.equal(h.requests.at(-1).type,'signIn');assert.equal(h.requests.at(-1).password,'transient-password');
+});

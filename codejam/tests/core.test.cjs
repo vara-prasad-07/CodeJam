@@ -4,7 +4,7 @@ const {mkdtemp,writeFile,mkdir,rm}=require('node:fs/promises');
 const {execFileSync}=require('node:child_process');
 const path=require('node:path');
 const os=require('node:os');
-const {detectRepository}=require('../out/repository.js');
+const {detectRepository,readGitDiff}=require('../out/repository.js');
 const {createRoom,createMessage}=require('../out/model.js');
 
 test('Git detection reads nested repositories, latest commit, dirty and detached states',async t=>{
@@ -16,7 +16,14 @@ test('Git detection reads nested repositories, latest commit, dirty and detached
  await writeFile(path.join(dir,'app','package.json'),JSON.stringify({devDependencies:{typescript:'*'}}));
  const empty=await detectRepository(path.join(dir,'app'));
  assert.equal(empty.detected,true);assert.equal(empty.commit,'');assert.equal(empty.stack,'TypeScript · Node.js');
+ await writeFile(path.join(dir,'.env'),'TEST_SECRET=before');
  git('add','.');git('commit','-m','Initial room base');
+ git('remote','add','origin','https://sensitive-token@example.com/team/repo.git');
+ assert.equal((await detectRepository(dir)).identity,'example.com/team/repo');
+ await writeFile(path.join(dir,'.env'),'TEST_SECRET=after');
+ await writeFile(path.join(dir,'app','package.json'),JSON.stringify({name:'changed',devDependencies:{typescript:'*'}}));
+ const diff=await readGitDiff(dir);assert.match(diff,/changed/);assert.doesNotMatch(diff,/TEST_SECRET|sensitive-token/);
+ git('checkout','--','.env','app/package.json');
  const repo=await detectRepository(path.join(dir,'app'));
  assert.equal(repo.branch,'main');assert.equal(repo.summary,'Initial room base');assert.equal(repo.author,'CodeJam Test');assert.equal(repo.dirty,false);assert.equal(repo.commit,git('rev-parse','--short','HEAD'));
  await writeFile(path.join(dir,'app','file.ts'),'export const value = 1;');

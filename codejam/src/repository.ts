@@ -4,7 +4,7 @@ import { readFile } from 'node:fs/promises';
 
 export interface Repository {
  root: string; name: string; branch: string; commit: string; summary: string;
- author: string; committedAt: string; dirty: boolean; stack: string; detected: boolean;
+ author: string; committedAt: string; dirty: boolean; stack: string; detected: boolean; identity?: string;
 }
 function git(cwd: string, args: string[]): Promise<string> {
  return new Promise((resolve, reject) => execFile('git', ['-C', cwd, ...args],
@@ -28,6 +28,20 @@ export async function detectRepository(folder: string): Promise<Repository> {
   } catch { /* No package metadata. */ }
  }
  const [summary = '', author = '', committedAt = ''] = log.split('\n');
- return { root, name: path.basename(root), branch: branch || (commit ? 'Detached HEAD' : 'No commits yet'),
+ let remote = detected ? await read(['remote', 'get-url', 'origin']) : '';
+ remote = remote.replace(/^git@([^:]+):/, 'https://$1/').replace(/\.git$/, '');
+ let identity = 'local:' + path.basename(root);
+ try { const url = new URL(remote); identity = url.host.toLowerCase() + url.pathname.replace(/\/$/, ''); } catch { /* Local-only repository. */ }
+ return { identity, root, name: path.basename(root), branch: branch || (commit ? 'Detached HEAD' : 'No commits yet'),
   commit, summary, author, committedAt, dirty: Boolean(status), stack, detected };
+}
+
+export async function readGitDiff(root: string): Promise<string> {
+ const excludes = ['.', ':(exclude)**/.env*', ':(exclude).env*', ':(exclude)**/*.pem', ':(exclude)**/*.key', ':(exclude)**/*credentials*.json', ':(exclude)**/*service*account*.json'];
+ const chunks: string[] = [];
+ for (const args of [['diff', '--no-ext-diff', '--no-textconv', '--', ...excludes], ['diff', '--cached', '--no-ext-diff', '--no-textconv', '--', ...excludes]]) {
+  try { chunks.push(await git(root, args)); } catch { /* No diff / non-Git checkout. */ }
+ }
+ const diff = chunks.filter(Boolean).join('\n\n');
+ return diff.length > 20000 ? diff.slice(0, 19800) + '\n[Diff truncated to the 20,000 character context limit]' : diff;
 }

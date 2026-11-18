@@ -1,9 +1,9 @@
-﻿import { NCEngine, AreaCode, LogLevel, ConnectionStatus, ConnectionStatusHandler, MessageHandler, MessageType, Message, GroupChannel, GroupChannelIdentifier, BaseChannel, SendTextMessageParams, MessagesQuery, ChannelType } from '@nexconn/chat';
+﻿import { NCEngine, AreaCode, LogLevel, ConnectionStatus, ConnectionStatusHandler, MessageHandler, MessageType, Message, GroupChannel, GroupChannelIdentifier, BaseChannel, SendTextMessageParams, MessagesQuery, ChannelType, MentionedType } from '@nexconn/chat';
 import type { Attachment } from './model';
 
 type Host = { postMessage(data: unknown): void };
 interface Session { appKey: string; token: string; userId: string; region: 'SG' | 'NA' | 'SA' }
-interface SendInput { channelId: string; text: string; attachment?: Attachment; replyTo?: string; clientId: string }
+interface SendInput { channelId: string; text: string; attachment?: Attachment; replyTo?: string; clientId: string; discussionId?: string; mentions?: string[]; reviewedDraft?: boolean }
 export function startNexconnBridge(host: Host) {
  let initializedKey = '', connectedUser = '';
  const queries = new Map<string, MessagesQuery>();
@@ -12,7 +12,7 @@ export function startNexconnBridge(host: Host) {
   if (m.messageType !== MessageType.TEXT || m.channelIdentifier.channelType !== ChannelType.GROUP) { return null; }
   let extra: Record<string, unknown> = {};
   try { const parsed = JSON.parse(m.content.extra || '{}'); if (parsed?.codejam === 1) { extra = parsed; } } catch { /* Ordinary Nexconn text. */ }
-  return { id: m.messageId, channelId: m.channelIdentifier.channelId, channelType: m.channelIdentifier.channelType, userId: m.senderUserId, text: m.content.text || '', createdAt: new Date(m.sentTime).toISOString(), attachment: extra.attachment, replyTo: extra.replyTo, clientId: extra.clientId };
+  return { id: m.messageId, channelId: m.channelIdentifier.channelId, channelType: m.channelIdentifier.channelType, userId: m.senderUserId, text: m.content.text || '', createdAt: new Date(m.sentTime).toISOString(), attachment: extra.attachment, replyTo: extra.replyTo, clientId: extra.clientId, discussionId: extra.discussionId, reviewedDraft: extra.reviewedDraft === true, mentions: m.content.mentionedInfo?.userIdList || [] };
  };
  const messages = (items: Message[]) => items.map(normalize).filter(Boolean);
  function initialize(session: Session) {
@@ -41,14 +41,17 @@ export function startNexconnBridge(host: Host) {
   let query = queries.get(channelId);
   if (!older || !query) { query = BaseChannel.createMessagesQuery({ channelIdentifier: new GroupChannelIdentifier(channelId), pageSize: 50, isAscending: false }); queries.set(channelId, query); }
   const result = await query.loadNextPage();
-  if (!result.isOk || !result.data) { throw new Error(`Nexconn message history failed (code ${result.code}). Enable cloud message history in the Nexconn Console, then retry.`); }
+  if (!result.isOk || !result.data) {
+   const reason = result.code === 22406 ? 'Your Nexconn identity is not a member of this room. Click Reconnect to repair membership.' : 'Retry after checking Nexconn Chat service access and connection.';
+   throw new Error(`Nexconn message history failed (code ${result.code}). ${reason}`);
+  }
   return { messages: messages(result.data.data), hasMore: query.hasNext };
  }
  async function send(input: SendInput) {
   if (sent.has(input.clientId)) { return sent.get(input.clientId); }
   if (NCEngine.getConnectionStatus() !== ConnectionStatus.CONNECTED) { throw new Error('Nexconn is disconnected. Reconnect before sending.'); }
   const promise = (async () => {
-   const result = await new GroupChannel(input.channelId).sendMessage(new SendTextMessageParams({ text: input.text || '[Shared code]', extra: JSON.stringify({ codejam: 1, attachment: input.attachment, replyTo: input.replyTo, clientId: input.clientId }) }));
+   const result = await new GroupChannel(input.channelId).sendMessage(new SendTextMessageParams({ text: input.text || '[Shared code]', mentionedInfo: input.mentions?.length ? { type: MentionedType.USERS, userIdList: input.mentions } : undefined, extra: JSON.stringify({ codejam: 1, attachment: input.attachment, replyTo: input.replyTo, clientId: input.clientId, discussionId: input.discussionId, reviewedDraft: input.reviewedDraft }) }));
    if (!result.isOk || !result.data) { throw new Error(`Nexconn message send failed (code ${result.code}). Your draft is kept for retry.`); }
    return normalize(result.data);
   })();

@@ -24,6 +24,12 @@ const esbuildProblemMatcherPlugin = {
 };
 
 async function main() {
+	const client = await esbuild.context({
+		entryPoints: ['src/nexconnClient.ts'], bundle: true, platform: 'browser',
+		alias: { path: require.resolve('path-browserify') },
+		format: 'iife', outfile: 'media/nexconn.js', minify: production,
+		sourcemap: !production, logLevel: 'silent'
+	});
 	const ctx = await esbuild.context({
 		entryPoints: [
 			'src/extension.ts'
@@ -43,8 +49,11 @@ async function main() {
 		],
 	});
 	if (watch) {
+		await client.watch();
 		await ctx.watch();
 	} else {
+		await client.rebuild();
+		await client.dispose();
 		await ctx.rebuild();
 		await ctx.dispose();
 	}

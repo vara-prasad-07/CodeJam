@@ -6,3 +6,12 @@ out/
 .env.*
 !.env.example
 *.vsix
+
+server/.data/
+server/.env
+server/.env.hosted
+
+!.env.hosted.example
+
+media/nexconn.js
+media/nexconn.js.map

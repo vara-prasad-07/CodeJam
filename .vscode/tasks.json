@@ -1,0 +1,14 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "CodeJam: compile",
+      "type": "shell",
+      "command": "npm",
+      "args": ["run", "compile"],
+      "options": { "cwd": "${workspaceFolder}/codejam" },
+      "problemMatcher": "$tsc",
+      "presentation": { "reveal": "silent" }
+    }
+  ]
+}

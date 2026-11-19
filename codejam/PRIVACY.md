@@ -20,7 +20,7 @@ Hosting: Render. Authentication/database: Firebase. Messaging/audio: Nexconn. AI
 
 ## Access and retention limits
 
-The prototype uses open Firestore rules. Backend membership checks do not prevent direct database access under those rules. Do not share confidential code or production data. A public production release requires server-authenticated Firestore and locked rules.
+The default hosted backend uses Firebase Admin credentials and IAM for database access. On November 19, 2026, targeted checks verified that anonymous and Firebase-authenticated direct client reads/writes on tested paths were denied, while Admin access and hosted account/session operations worked. CodeJam enforces room membership on its backend. Earlier prototype deployments used open rules; current restrictions do not undo any earlier exposure. Other backend operators must configure their own credentials, access rules and protections.
 
 App sessions expire after 30 days, limited call sessions after four hours, and invitations after seven days unless renewed. Inactive presence is hidden, but records are not automatically purged. Room data, messages and decision snapshots have no application-level deletion schedule. Provider retention settings also apply.
 

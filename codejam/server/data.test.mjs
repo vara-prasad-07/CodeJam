@@ -26,3 +26,10 @@ test('Firestore fails closed when Admin credentials fail, never falling back to 
  const store=createFirestoreStore({projectId:'test-project',getAccessToken:async()=>{throw Object.assign(new Error('Admin not configured'),{status:503});},fetchImpl:async()=>{calls++;}});
  await assert.rejects(store.get('codejam_rooms','one'),/Admin not configured/);assert.equal(calls,0);
 });
+
+
+test('Firestore HTTP 400 version-precondition failures are conflicts, not service outages',async()=>{
+ const store=createFirestoreStore({projectId:'test-project',getAccessToken:async()=>'test-token',fetchImpl:async()=>({ok:false,status:400,json:async()=>({error:{status:'FAILED_PRECONDITION'}})})});
+ await assert.rejects(store.put('codejam_rooms','one',{id:'one'},'stale-version'),e=>e.status===409);
+ await assert.rejects(store.put('codejam_rooms','one',{id:'one'}),e=>e.status===503);
+});

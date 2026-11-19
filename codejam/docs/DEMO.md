@@ -18,6 +18,6 @@ Start the backend and launch **CodeJam - Two People**. Use separate Firebase acc
 - Manual outstanding: Google popup, rendered visual layout, microphone permission and actual two-way audio. The computer-use host was unavailable.
 - Public hosting, Marketplace upload and recorded demo video: not performed. Runnable source and local VSIX provided. This walkthrough can be used as a demo recording script.
 
-Before public release, configure server-authenticated Firestore and locked rules, HTTPS hosting and your actual publisher identity. Current open rules do not provide production-private storage.
+Admin/IAM access and locked client access were verified on November 19, 2026; see DATABASE_VERIFICATION.md. Finish the remaining manual acceptance and deploy the conflict-handling correction before public release.
 
 Dependency audit: runtime dependencies report zero known vulnerabilities. The full development toolchain still reports advisories in packaging/lint/test glob dependencies, including an advisory without an available upstream patch. Development dependencies are excluded from the VSIX.

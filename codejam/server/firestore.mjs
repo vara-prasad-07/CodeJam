@@ -52,7 +52,7 @@ export function createFirestoreStore({projectId=process.env.FIREBASE_PROJECT_ID|
   let response;try{response=await fetchImpl(url,{method,headers:{'Content-Type':'application/json',Authorization:'Bearer '+bearer},body:body===undefined?undefined:JSON.stringify(body),signal:AbortSignal.timeout(15000)});}catch{const e=new Error('Firestore is unreachable. Check the network and retry.');e.status=503;throw e;}
   const result=await response.json().catch(()=>({}));
   if(response.status===404){return null;}
-  if(!response.ok){const e=new Error(`Firestore ${result.error?.status||response.status}. Check the configured project and database access.`);e.status=response.status===409||response.status===412?409:503;throw e;}
+  if(!response.ok){const e=new Error(`Firestore ${result.error?.status||response.status}. Check the configured project and database access.`);const conflict=response.status===409||response.status===412||(result.error?.status==='FAILED_PRECONDITION'&&Object.hasOwn(query,'currentDocument.updateTime'));e.status=conflict?409:503;throw e;}
   return result;
  }
  return {

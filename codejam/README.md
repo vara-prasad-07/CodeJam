@@ -4,7 +4,7 @@ Team conversations, shared code and decisions beside your editor.
 
 CodeJam brings repository-aware chat, code discussions, searchable decisions, reviewed AI drafts and audio huddles into VS Code. Open the sidebar for quick updates or use **CodeJam: Open Full View** for more space.
 
-**Early preview:** the current hosted service is a prototype. Its Firestore configuration uses open access rules and is not suitable for confidential or production data. Read [Privacy](PRIVACY.md) and [Security](SECURITY.md) before connecting.
+**Early preview:** the hosted backend uses Admin/IAM database access, and direct Firestore client access was verified as denied on November 19, 2026. This targeted check is not a full security audit. Read [Privacy](PRIVACY.md) and [Security](SECURITY.md) before connecting.
 
 ## Start collaborating
 

@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.0.4
+
+Recognize Firestore HTTP 400 FAILED_PRECONDITION version conflicts so concurrent metadata updates can retry. Record live database-access verification and update privacy/security disclosures to reflect the Admin/IAM migration.
+
 ## 1.0.3
 
 Add server-only Firebase Admin/IAM authentication, fail-closed credential handling, a deny-all client rules file, and the Render secret-file migration guide. Deployed rules must still be changed and verified explicitly.

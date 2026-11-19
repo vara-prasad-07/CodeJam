@@ -2,7 +2,7 @@
   "name": "codejam",
   "displayName": "CodeJam",
   "description": "Repository-aware team chat, code discussions, searchable decisions, reviewed AI drafts, and audio huddles.",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "engines": {
     "vscode": "^1.146.0"
   },

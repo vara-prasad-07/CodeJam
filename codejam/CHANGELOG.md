@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.0.6
+
+Change the Marketplace display name to CodeJam Workspace after CodeJam was rejected as already taken. Keep publisher CodeJam and internal name codejam-workspace.
+
+## 1.0.5
+
+Use the new internal extension name `codejam-workspace` after the previous `codejam` Marketplace entry was removed. Keep the visible name CodeJam and publisher CodeJam. This changes extension identity; uninstall an earlier CodeJam build before installing this one and sign in again. Existing account rooms remain on the backend.
+
 ## 1.0.4
 
 Recognize Firestore HTTP 400 FAILED_PRECONDITION version conflicts so concurrent metadata updates can retry. Record live database-access verification and update privacy/security disclosures to reflect the Admin/IAM migration.

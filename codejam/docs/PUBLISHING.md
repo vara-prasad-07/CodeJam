@@ -30,7 +30,7 @@ npm run check:release
 npm run vsix
 ```
 
-`check:release` validates files and metadata but cannot prove publisher ownership. Confirm the **CodeJam** publisher is selected under your account before uploading. The VSIX is created in the outer `artifacts` folder as `codejam-1.0.4.vsix`. This is a universal package; no platform-specific native dependency is bundled. Source, backend, tests, node_modules, `.env` and development docs are excluded by a package allowlist. The installed extension defaults to the Render URL.
+`check:release` validates files and metadata but cannot prove publisher ownership. Confirm the **CodeJam** publisher is selected under your account before uploading. The VSIX is created in the outer `artifacts` folder as `codejam-workspace-1.0.6.vsix`. This is a universal package; no platform-specific native dependency is bundled. Source, backend, tests, node_modules, `.env` and development docs are excluded by a package allowlist. The installed extension defaults to the Render URL.
 
 Commit and push the intended source, docs and assets to your GitHub repository so Marketplace readme links resolve. Never commit `.env` or private legacy data.
 
@@ -38,7 +38,7 @@ Install this final VSIX locally and complete DEMO.md before uploading. Do not up
 
 ## 4. Upload using the website
 
-On the Marketplace publisher management page select your publisher, choose **New extension > Visual Studio Code**, and upload `artifacts/codejam-1.0.4.vsix`. Review the title, description, icon, readme, license and publisher. Complete any required account verification and terms yourself. Submit when the release requirements above are satisfied.
+On the Marketplace publisher management page select your publisher, choose **New extension > Visual Studio Code**, and upload `artifacts/codejam-workspace-1.0.6.vsix`. Review the title, description, icon, readme, license and publisher. Complete any required account verification and terms yourself. Submit when the release requirements above are satisfied.
 
 The website flow does not require putting a publishing token into the project. Do not add Marketplace credentials to `.env` or share them in chat. Marketplace performs validation/scanning; use its status page to see whether publication succeeded. No publication has been performed by these preparation steps.
 
@@ -57,3 +57,13 @@ Fix and test changes, increment `version` in package.json and package-lock.json 
 - Release artifacts: outer artifacts/; old VSIX packages are in artifacts/archive/.
 
 Official instructions: https://code.visualstudio.com/api/working-with-extensions/publishing-extension
+
+## Removed Marketplace entry
+
+The previous internal name `codejam` was removed from Marketplace. Microsoft permanently reserves removed extension names, including for the original publisher. This package uses `name: codejam-workspace`, `displayName: CodeJam Workspace`, `publisher: CodeJam`. Its new identity is `CodeJam.codejam-workspace`.
+
+Upload this package as a new extension under the existing CodeJam publisher. Do not create another publisher. If an old CodeJam build is installed locally, uninstall it before installing the new identity, then sign in again with the same Firebase account to retrieve existing rooms. Existing installations do not automatically migrate to a different extension ID.
+
+For subsequent releases use Update and increase the version. Avoid Remove when you only want to replace a build; unpublishing and removing are different operations. Official policy: https://code.visualstudio.com/api/working-with-extensions/publishing-extension#removing-extensions
+
+The portal also rejected the display name `CodeJam` as taken. Version 1.0.6 uses `CodeJam Workspace`. The publisher remains `CodeJam`; do not remove or recreate the publisher. Actual name acceptance is determined by the Marketplace during upload.

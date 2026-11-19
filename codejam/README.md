@@ -1,4 +1,4 @@
-# CodeJam
+# CodeJam Workspace
 
 Team conversations, shared code and decisions beside your editor.
 
@@ -66,3 +66,7 @@ Google popup, rendered layout and real two-way audio still need the maintainer's
 ## License
 
 CodeJam source is available under the [MIT license](LICENSE.txt). Bundled third-party SDKs retain their own licenses; see [Third-party notices](THIRD_PARTY_NOTICES.md). The MIT license does not grant rights to third-party services or SDKs.
+
+## Earlier preview installations
+
+The extension identifier is now `CodeJam.codejam-workspace`. If you installed the earlier `CodeJam.codejam` preview, uninstall it before installing this build, then sign in again with the same account. Your existing rooms remain on the backend.

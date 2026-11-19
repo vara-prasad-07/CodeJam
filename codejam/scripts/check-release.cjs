@@ -6,6 +6,7 @@ const errors = [];
 for (const name of ['README.md','CHANGELOG.md','LICENSE.txt','PRIVACY.md','SUPPORT.md','SECURITY.md','THIRD_PARTY_NOTICES.md','media/icon.png']) {
  if (!fs.existsSync(path.join(root,name))) errors.push('Missing ' + name);
 }
+if (manifest.name === 'codejam') errors.push('The removed Marketplace name codejam is reserved. Use codejam-workspace.');
 if (manifest.publisher === 'codejam-team' || !manifest.publisher) errors.push('Set the publisher ID you own: npm run set:publisher -- YOUR_ID');
 if (manifest.contributes.configuration.properties['codejam.apiUrl'].default !== 'https://codejam-vdmp.onrender.com') errors.push('Unexpected hosted backend default.');
 if (!manifest.icon || !manifest.icon.endsWith('.png')) errors.push('Marketplace icon must be PNG.');

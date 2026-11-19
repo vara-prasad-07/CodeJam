@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+Keep backend HTTP startup independent of Firestore availability. Skip cloud migration-marker access when no legacy file exists; defer required legacy imports with shared attempts and retry backoff, preserving existing records and partial progress. Keep liveness/configuration endpoints available during database quota outages while data endpoints return errors.
+
+## 1.0.7
+
 Throttle huddle database checks and heartbeats, stop checks in hidden idle call tabs, and back off after service/quota errors while keeping local call controls available.
 
 Reduce Firestore polling: refresh room lists once a minute and room metadata/presence every 30 seconds, pause while all views are hidden or sign-in is required, and back off on quota/service failures. Keep Nexconn chat live during a metadata outage. Return quota-specific errors and Retry-After from the backend.

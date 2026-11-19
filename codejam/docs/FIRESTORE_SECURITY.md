@@ -21,9 +21,9 @@ Keep existing Firebase web settings, Nexconn keys, Gemini key, `HOST=0.0.0.0` an
 
 ## 2. Deploy the updated backend
 
-Commit/push the updated `server/firestore.mjs`, `server/index.mjs`, `server/firestore.rules`, `package.json` and `package-lock.json` along with intended source/docs. Never commit the secret JSON. Deploy that commit on Render with the normal build/start commands.
+Commit/push the updated `server/firestore.mjs`, `server/index.mjs`, `server/legacy-migration.mjs`, `server/firestore.rules`, `package.json` and `package-lock.json` along with intended source/docs. Never commit the secret JSON. Deploy that commit on Render with the normal build/start commands.
 
-A credential or permission failure stops startup; the previous healthy deployment may remain active. Check the new deploy logs and confirm this new field at `https://codejam-vdmp.onrender.com/health`:
+HTTP startup does not query Firestore. `/health` checks server liveness and configuration; database-backed requests still fail closed on credential, permission or quota errors. Optional legacy imports run before the first database-backed request and defer with backoff if Firestore is unavailable. Check the deploy logs and confirm this field at `https://codejam-vdmp.onrender.com/health`:
 
 ```json
 "databaseAccess": "server-iam"

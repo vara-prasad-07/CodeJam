@@ -2,7 +2,7 @@
   "name": "codejam-workspace",
   "displayName": "CodeJam Workspace",
   "description": "Repository-aware team chat, code discussions, searchable decisions, reviewed AI drafts, and audio huddles.",
-  "version": "1.0.6",
+  "version": "1.0.7",
   "engines": {
     "vscode": "^1.146.0"
   },

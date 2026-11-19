@@ -59,7 +59,9 @@ Use **Share Selection with Team** in the editor context menu or attach selected 
 
 Firestore stores accounts, hashed application sessions, rooms/membership, discussions, pins, reactions, presence and call controls/state. Nexconn stores chat history and message payloads. Firestore retains pinned/thread-root snapshots so context survives history pagination. Gemini receives selected context on generation.
 
-Existing Nexconn metadata from `server/.data/nexconn-rooms.json` migrates once; the original stays untouched. Existing development sessions can **Link an account** to retain identity/memberships. Already established Firebase accounts retain their own identity; there is no automatic account merge. Pre-Nexconn preview rooms are not converted.
+Existing Nexconn metadata from `server/.data/nexconn-rooms.json` migrates once before the first database-backed request; the original stays untouched. Without a legacy file, startup never reads or writes the migration marker in Firestore. With a file, concurrent requests share an import attempt; failures defer database requests with Retry-After (at least ten minutes for quota errors), while `/health`, auth configuration and browser assets remain available. Partial imports resume without overwriting existing records. `/health` is a liveness check, not proof of database availability.
+
+Existing development sessions can **Link an account** to retain identity/memberships. Already established Firebase accounts retain their own identity; there is no automatic account merge. Pre-Nexconn preview rooms are not converted.
 
 **Database authentication:** Firestore now requires backend Admin/IAM credentials using `GOOGLE_APPLICATION_CREDENTIALS`; web configuration alone is insufficient for database access. Keep the service-account JSON private and outside the repository. Follow [FIRESTORE_SECURITY.md](FIRESTORE_SECURITY.md) to configure Render and deploy locked rules in the correct order. Existing open deployed rules remain unsafe until explicitly replaced and tested. Remote use also needs HTTPS, `codejam.apiUrl`, matching `CODEJAM_PUBLIC_URL` and an authorized Firebase domain.
 

@@ -7,6 +7,7 @@ import { createNexconnService } from './nexconn.mjs';
 import { createFirestoreStore } from './firestore.mjs';
 import { createFirebaseAuth } from './auth.mjs';
 import { createAI } from './ai.mjs';
+import { createLegacyMigration } from './legacy-migration.mjs';
 
 const hash = value => createHash('sha256').update(value).digest('hex');
 const fail=(status,message)=>{const error=new Error(message);error.status=status;throw error;};
@@ -19,18 +20,14 @@ const cleanSource=(source,room)=>{
  if(source.attachment){const a=source.attachment;if(!text(a.path,1000)||/(^[\\/]|^[a-z]:|(^|[\\/])\.\.([\\/]|$))/i.test(a.path)||typeof a.code!=='string'||a.code.length>12000||!Number.isInteger(a.line)||!Number.isInteger(a.endLine)||a.line<1||a.endLine<a.line){fail(400,'Invalid code reference.');}result.attachment={path:a.path,code:a.code,line:a.line,endLine:a.endLine,branch:String(a.branch||''),commit:String(a.commit||''),repository:String(a.repository||room.repositoryIdentity||'')};}
  return result;
 };
-export async function createRoomServer({store=createFirestoreStore(),nexconn=createNexconnService(),auth=createFirebaseAuth(),ai=createAI(),migrate=true,allowGuests=process.env.CODEJAM_ALLOW_GUESTS==='true'}={}){
+export async function createRoomServer({store=createFirestoreStore(),nexconn=createNexconnService(),auth=createFirebaseAuth(),ai=createAI(),migrate=true,legacyFile=path.join(import.meta.dirname,'.data','nexconn-rooms.json'),allowGuests=process.env.CODEJAM_ALLOW_GUESTS==='true'}={}){
  const tickets=new Map(),loginRequests=new Map(),locks=new Map(),rates=new Map();
  async function mutate(collection,id,change){
   const key=collection+'/'+id,previous=locks.get(key)||Promise.resolve();
   const task=previous.catch(()=>{}).then(async()=>{for(let attempt=0;attempt<3;attempt++){const current=await store.get(collection,id);const updated=await change(current);try{return await store.put(collection,id,updated,current?._version);}catch(e){if(e.status!==409||attempt===2){throw e;}}}});
   locks.set(key,task);try{return await task;}finally{if(locks.get(key)===task){locks.delete(key);}}
  }
- if(migrate&&store.kind==='firestore'&&!await store.get('codejam_meta','legacy-migration-v1')){
-  let old;try{old=JSON.parse(await readFile(path.join(import.meta.dirname,'.data','nexconn-rooms.json'),'utf8'));}catch(e){if(e.code!=='ENOENT'){throw e;}}
-  if(old){for(const s of old.sessions||[]){if(!await store.get('codejam_sessions',s.tokenHash)){await store.put('codejam_sessions',s.tokenHash,{...s,isGuest:true,expiresAt:Date.now()+30*86400000});}}for(const r of old.rooms||[]){if(!await store.get('codejam_rooms',r.id)){await store.put('codejam_rooms',r.id,{...r,memberIds:r.members.map(m=>m.id),repositoryIdentity:r.repositoryIdentity||'',inviteExpiresAt:Date.now()+7*86400000});}}}
-  await store.put('codejam_meta','legacy-migration-v1',{completedAt:now(),importedRooms:old?.rooms?.length||0});
- }
+ const migration=await createLegacyMigration({store,filePath:legacyFile,enabled:migrate});
  async function issue(user,scope){const token=randomBytes(32).toString('hex');await store.put('codejam_sessions',hash(token),{...user,...scope,expiresAt:Date.now()+(scope?4*3600000:30*86400000)});return {token,user:{id:user.id,name:user.name,email:user.email||'',isGuest:Boolean(user.isGuest)}};}
  async function signedIn(identity,legacy){
   const existing=await store.get('codejam_accounts',identity.uid);
@@ -53,12 +50,15 @@ export async function createRoomServer({store=createFirestoreStore(),nexconn=cre
    const data=await readFile(path.join(import.meta.dirname,'public',file));res.writeHead(200,{'Content-Type':type+'; charset=utf-8'});res.end(data);return undefined;
   }
   let body={};if(req.method==='POST'){let raw='';for await(const chunk of req){raw+=chunk;if(Buffer.byteLength(raw)>120000){fail(413,'Request exceeds the context limit.');}}try{body=JSON.parse(raw);}catch{fail(400,'Invalid JSON.');}if(!body||typeof body!=='object'||Array.isArray(body)){fail(400,'Expected a JSON object.');}}
-  if(req.method==='GET'&&url.pathname==='/health'){return {provider:'nexconn',database:store.kind,databaseAccess:store.access||'test-only',aiConfigured:ai.configured,auth:'firebase'};}
+  if(req.method==='GET'&&url.pathname==='/health'){return {provider:'nexconn',database:store.kind,databaseAccess:store.access||'test-only',aiConfigured:ai.configured,auth:'firebase',legacyMigration:migration.status};}
   if(req.method==='GET'&&url.pathname==='/auth/config'){return browserConfig();}
   // Small per-address limit for public authentication endpoints; no passwords or tokens are logged.
   if(req.method==='POST'&&/^\/(auth|sessions)/.test(url.pathname)){
    const key=req.socket.remoteAddress+url.pathname,bucket=rates.get(key)||{count:0,until:Date.now()+60000};if(bucket.until<Date.now()){bucket.count=0;bucket.until=Date.now()+60000;}if(++bucket.count>60){fail(429,'Too many sign-in attempts. Wait a minute and retry.');}rates.set(key,bucket);
   }
+  // Gate database routes if a real legacy import is pending. Public health/config
+  // and browser assets remain available, including while Firestore is unavailable.
+  await migration.ensureReady();
   if(req.method==='POST'&&url.pathname==='/auth/password'){
    const identity=await auth.password(body.mode,{email:body.email,password:body.password,name:safeName(body.name)});return signedIn(identity,await userFrom(req));
   }

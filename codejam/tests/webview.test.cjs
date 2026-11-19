@@ -64,3 +64,71 @@ test('Firebase password remains transient across refresh and is never persisted 
  assert.equal(JSON.stringify(h.saved()).includes('transient-password'),false);
  h.submit('#auth-form');assert.equal(h.requests.at(-1).type,'signIn');assert.equal(h.requests.at(-1).password,'transient-password');
 });
+
+function collaboration(h){
+ const source={id:'root',userId:'other',author:'Teammate',text:'Review agent context',createdAt:'2026-11-19T12:00:00Z'};
+ const room={id:'r',name:'Build room',members:[{id:'me',name:'Me'},{id:'other',name:'Teammate'}],messages:[source],discussions:[{id:'open',title:'Review context',status:'open',source,createdAt:source.createdAt},{id:'done',title:'Finished discussion',status:'resolved',source:{...source,id:'other-root'},createdAt:source.createdAt}],pins:[]};
+ h.emit({...h.state,active:room.id,rooms:[room]});
+ return room;
+}
+
+test('Discussions have a stable destination, status filters, and independent drafts',t=>{
+ const h=setup(t);collaboration(h);
+ assert.ok(h.q('nav [data-tab="chat"][aria-current="page"]'));
+ assert.equal(h.q('.discussion-tray'),null);
+ h.input('#compose','Room draft');
+ h.click('[data-tab="discussions"]');
+ assert.equal(h.w.document.querySelectorAll('.discussion-item').length,1);
+ h.click('[data-filter="resolved"]');assert.match(h.q('.discussion-item').textContent,/Finished discussion/);
+ h.click('[data-filter="all"]');assert.equal(h.w.document.querySelectorAll('.discussion-item').length,2);
+ h.click('[data-action="openThread"][data-id="open"]');
+ assert.equal(h.q('#compose').value,'');assert.ok(h.q('nav [data-tab="discussions"][aria-current="page"]'));
+ h.input('#compose','Thread draft');
+ h.click('[data-action="backDiscussions"]');h.click('[data-tab="chat"]');
+ assert.equal(h.q('#compose').value,'Room draft');
+ h.click('[data-tab="discussions"]');h.click('[data-action="openThread"][data-id="open"]');
+ assert.equal(h.q('#compose').value,'Thread draft');
+ h.submit('#message-form');assert.equal(h.requests.at(-1).discussionId,'open');
+});
+
+test('Message actions retain their source, close after reply, and preserve focus on Escape',t=>{
+ const h=setup(t);collaboration(h);
+ const more=h.q('[data-action="messageMenu"]');more.focus();more.click();
+ assert.match(h.q('.message-preview').textContent,/Review agent context/);
+ h.q('[data-action="close"]').dispatchEvent(new h.w.KeyboardEvent('keydown',{key:'Escape',bubbles:true}));
+ assert.equal(h.q('.modal'),null);assert.equal(h.w.document.activeElement.dataset.action,'messageMenu');
+ h.click('[data-action="messageMenu"]');h.click('.modal [data-action="reply"]');
+ assert.equal(h.q('.modal'),null);assert.match(h.q('.attachment').textContent,/Replying to Teammate/);
+ h.input('#compose','A focused reply');h.submit('#message-form');assert.equal(h.requests.at(-1).replyTo,'root');
+});
+
+test('Room picker exposes the active room and supports Escape and outside dismissal',t=>{
+ const h=setup(t);collaboration(h);
+ h.click('[data-action="rooms"]');
+ assert.equal(h.q('[data-action="rooms"]').getAttribute('aria-expanded'),'true');
+ assert.equal(h.q('.room-option[aria-current="true"]').dataset.id,'r');
+ h.q('.room-option').dispatchEvent(new h.w.KeyboardEvent('keydown',{key:'Escape',bubbles:true}));
+ assert.equal(h.q('.room-menu'),null);assert.equal(h.w.document.activeElement.dataset.action,'rooms');
+ h.click('[data-action="rooms"]');h.q('#compose').click();
+ assert.equal(h.q('.room-menu'),null);assert.equal(h.q('[data-action="rooms"]').getAttribute('aria-expanded'),'false');
+});
+
+test('Message overflow keeps discussion, decisions, and AI actions reachable',t=>{
+ const h=setup(t);collaboration(h);
+ h.click('[data-action="messageMenu"]');h.click('.modal [data-action="pin"]');
+ assert.equal(h.q('#pin-text').value,'Review agent context');
+ h.input('#pin-title','Keep AI drafts private');h.click('[data-action="savePin"]');
+ const pin=h.requests.at(-1);assert.equal(pin.type,'pin');assert.equal(pin.id,'root');h.ack(pin);
+ h.click('[data-action="messageMenu"]');h.click('.modal [data-action="discuss"]');
+ assert.ok(h.q('.thread-heading'));
+ h.click('[data-tab="chat"]');h.click('[data-action="messageMenu"]');h.click('.modal [data-action="agent"]');
+ h.click('[data-action="previewContext"]');assert.equal(h.requests.at(-1).sourceId,'root');
+});
+
+test('paused metadata updates explain the state without blocking live chat or losing the draft',t=>{
+ const h=setup(t),room=collaboration(h);h.input('#compose','Keep working');
+ h.emit({...h.state,rooms:[room],active:room.id,connected:true,updatesPaused:true});
+ assert.match(h.q('.sync-banner').textContent,/Chat is still connected/);
+ assert.equal(h.q('#compose').value,'Keep working');assert.equal(h.q('#compose').disabled,false);
+ h.emit({...h.state,rooms:[room],active:room.id,connected:true,updatesPaused:false});assert.equal(h.q('.sync-banner'),null);
+});

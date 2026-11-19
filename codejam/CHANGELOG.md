@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+Throttle huddle database checks and heartbeats, stop checks in hidden idle call tabs, and back off after service/quota errors while keeping local call controls available.
+
+Reduce Firestore polling: refresh room lists once a minute and room metadata/presence every 30 seconds, pause while all views are hidden or sign-in is required, and back off on quota/service failures. Keep Nexconn chat live during a metadata outage. Return quota-specific errors and Retry-After from the backend.
+
+Redesign the workspace around Chat, Discussions, Decisions and Team. Add a compact composer that grows with its draft, a room picker with invitations, focused message actions, discussion filters, and repository details on demand. Preserve room/thread drafts and scroll position, add dialog focus restoration and Escape handling, and refresh all workspace surfaces for narrow sidebars and full view.
+
 ## 1.0.6
 
 Change the Marketplace display name to CodeJam Workspace after CodeJam was rejected as already taken. Keep publisher CodeJam and internal name codejam-workspace.

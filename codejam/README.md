@@ -17,14 +17,16 @@ CodeJam connects to `https://codejam-vdmp.onrender.com` by default. Hosted-servi
 
 ## Keep code in context
 
-The header shows your Git branch, latest commit and working-tree state. Select code in the editor and choose **Share Selection with Team** to send a reference with relative path, line range, branch, revision and selected excerpt.
+Use **Chat**, **Discussions**, **Decisions**, and **Team** to move around your room. Click the room name to switch rooms or create/join another. The sliders button opens **Room setup**.
+
+Click the project name beside CodeJam for your Git branch, latest commit, and working-tree state. Select code in the editor and choose **Share Selection with Team** to send a reference with relative path, line range, branch, revision and selected excerpt. The message composer starts at one line, grows as you type, and sends with **Ctrl / ⌘ + Enter**.
 
 Open a reference in your checkout. When your revision differs, inspect the saved excerpt and working-copy diff. Opening a reference does not execute snippets or edit files.
 
 ## Turn conversations into decisions
 
 - Exchange messages, replies and mentions through Nexconn Chat.
-- Open a focused discussion from a message or code excerpt.
+- Open a message's **More actions** to start a discussion, save a decision, or ask AI. Find open and resolved conversations in **Discussions**.
 - Reply, react and resolve or reopen a discussion.
 - Pin a decision and search by title, text or path.
 - Reopen rooms and load earlier cloud history.
@@ -58,6 +60,8 @@ Local developers can set the API URL to `http://127.0.0.1:3000`. Provider secret
 ## Preview limits
 
 The free hosted service can take time to wake after inactivity. Wait a minute and reconnect after a timeout. Presence updates periodically. Rooms support 50 members; metadata queries return up to 500 records per collection. Password reset and account deletion are not available inside the extension.
+
+Chat arrives live through Nexconn. While CodeJam is visible, room metadata and presence refresh every 30 seconds, and room lists refresh once a minute. Background database polling pauses when all CodeJam views are hidden or sign-in is required. Quota errors pause automatic refresh for at least ten minutes, with longer delays after repeated failures; use Reconnect/Retry to explicitly retry. An exhausted Firestore quota still requires the quota to reset or be increased.
 
 Google popup, rendered layout and real two-way audio still need the maintainer's final manual acceptance pass. Read the privacy disclosure before sharing code, messages or account data.
 

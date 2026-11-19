@@ -45,9 +45,9 @@ Google opens your browser at `http://localhost:3000/signin`. Complete the popup 
 
 ## Features
 
-- Connect: create/join rooms, expiring invitations and renewal, repository identity, branch, latest commit/author/time, dirty status and account-based room restoration.
+- Room setup (header sliders): create/join rooms, expiring invitations and renewal, and account-based room restoration. Click the project name for repository identity, branch, latest commit/author/time and working-tree status.
 - Chat: actual Nexconn SDK send/receive, cloud history pagination, replies, mentions (`@First_Last`), selected code and failed-send draft retention. Sidebar/full view share one SDK connection.
-- Discussions: persistent threads, replies, resolve/reopen, reactions, path/lines/branch/commit, revision warnings, saved excerpt versus working-copy diff and local file opening.
+- Discussions: dedicated tab with open/resolved filters, persistent threads, independent drafts, replies, resolve/reopen, reactions, path/lines/branch/commit, revision warnings, saved excerpt versus working-copy diff and local file opening. Start a discussion through a message's More actions.
 - Decisions: pin a message/thread, search title/text/path, inspect its source and unpin with confirmation.
 - AI: ask `@agent` or use a message action. Choose code, messages and optional local Git diff. Preview context, generate a private draft, review/edit, then explicitly send under your name. Generation never posts automatically.
 - Team: recent presence with project-relative editor focus, member roster, actual call state and mini controls.
@@ -63,9 +63,15 @@ Existing Nexconn metadata from `server/.data/nexconn-rooms.json` migrates once; 
 
 **Database authentication:** Firestore now requires backend Admin/IAM credentials using `GOOGLE_APPLICATION_CREDENTIALS`; web configuration alone is insufficient for database access. Keep the service-account JSON private and outside the repository. Follow [FIRESTORE_SECURITY.md](FIRESTORE_SECURITY.md) to configure Render and deploy locked rules in the correct order. Existing open deployed rules remain unsafe until explicitly replaced and tested. Remote use also needs HTTPS, `codejam.apiUrl`, matching `CODEJAM_PUBLIC_URL` and an authorized Firebase domain.
 
-No automatic local database or messaging fallback exists. Acknowledged sends are deduplicated within a client lifetime; uncertain acknowledgements across a reload are not an exactly-once guarantee. Presence refreshes every 10 seconds and expires after 45 seconds. Metadata queries cap at 500 records per collection; rooms support 50 members.
+No automatic local database or messaging fallback exists. Acknowledged sends are deduplicated within a client lifetime; uncertain acknowledgements across a reload are not an exactly-once guarantee. Presence refreshes every 30 seconds while the workspace is visible and expires after 90 seconds without an update. Metadata queries cap at 500 records per collection; rooms support 50 members.
 
 ## Verification and packaging
+
+Database polling is separated from WebSocket chat delivery. The extension checks room metadata every 30 seconds and room membership every 60 seconds only while a workspace view is visible. Network/server failures back off from one minute; quota failures back off from ten minutes, capped at 30 minutes unless the server requests a longer delay. Manual retry bypasses the background cooldown. Account/backend changes reset the schedule.
+
+The browser huddle checks remote controls every ten seconds in a call, with heartbeats no more often than every 20 seconds. Idle visible call pages check every 30 seconds; idle hidden pages stop checking. Active audio continues checking while hidden. Call participants expire after 90 seconds without a successful heartbeat. Quota/server failures pause automatic checks without ending Nexconn audio; local mute and leave remain available.
+
+Deploy backend changes and rebuild `server/public/call.js` to update browser huddles and structured quota responses. Installing the extension VSIX updates editor polling independently, including recognition of the older backend's `Firestore RESOURCE_EXHAUSTED` message. Local tests use fake clocks and mocked providers without consuming live quotas.
 
 ```powershell
 npm run compile

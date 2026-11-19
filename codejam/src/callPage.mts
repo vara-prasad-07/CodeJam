@@ -1,22 +1,32 @@
 ﻿import { NCEngine, AreaCode, LogLevel } from '@nexconn/chat';
 import { NCCallEngine, NCCallType, NCCallMediaType, NCCallLogLevel } from '@nexconn/call';
+import { RefreshPolicy } from './refreshPolicy.js';
 
 type Grant = { appKey: string; token: string; region: 'SG' | 'NA' | 'SA'; sessionToken: string; userId: string; callUserId: string; room: {id:string;name:string}; callUsers: {id:string;name:string;callUserId:string}[] };
 const element = (id:string) => document.getElementById(id)!;
 let grant: Grant, engine: NCCallEngine, callId = '', incoming = '', joined = false, muted = false, state = 'Ready', startedAt = '', lastControl = '', ticking = false;
 let roster: {id:string;name:string;muted?:boolean;status?:string}[] = [];
+const retryPolicy = new RefreshPolicy();
+let nextPollAt = 0, nextHeartbeatAt = 0;
 const escape = (value:string) => value.replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]!));
 function showError(text:string){element('error').textContent=text;element('error').hidden=false;}
-async function api(route:string,body?:unknown){const response=await fetch(route,{method:body===undefined?'GET':'POST',headers:{'Content-Type':'application/json',...(grant?{Authorization:'Bearer '+grant.sessionToken}:{})},body:body===undefined?undefined:JSON.stringify(body)});const data=await response.json();if(!response.ok){throw new Error(data.error||'Call service unavailable.');}return data;}
+async function api(route:string,body?:unknown){
+ try{
+  const response=await fetch(route,{method:body===undefined?'GET':'POST',headers:{'Content-Type':'application/json',...(grant?{Authorization:'Bearer '+grant.sessionToken}:{})},body:body===undefined?undefined:JSON.stringify(body),signal:AbortSignal.timeout(15000)});
+  const data=await response.json();
+  if(!response.ok){throw Object.assign(new Error(data.error||'Call service unavailable.'),{status:response.status,code:data.code,retryAfterMs:Math.max(0,Number(response.headers?.get('Retry-After'))||0)*1000});}
+  retryPolicy.succeeded();return data;
+ }catch(error){const failure=error as Error&{status?:number};if(failure.status===undefined){Object.assign(failure,{status:0});}retryPolicy.failed(failure);throw failure;}
+}
 function render(){
  element('room-name').textContent=grant?.room.name||'Project huddle';element('call-status').textContent=state;element('identity').textContent=grant?.callUsers.find(u=>u.id===grant.userId)?.name||'Your session';
  const button=element('join') as HTMLButtonElement;button.textContent=incoming&&!joined?'Answer huddle':callId&&!joined?'Join huddle':'Start audio huddle';button.hidden=joined;
  (element('mute') as HTMLButtonElement).disabled=!joined;(element('leave') as HTMLButtonElement).disabled=!joined&&!incoming;element('mute').textContent=muted?'Unmute microphone':'Mute microphone';
  element('roster').innerHTML=(roster.length?roster:(grant?.callUsers||[]) as typeof roster).map(u=>`<div class="peer ${u.id===grant?.userId?'self':''}" data-peer="${escape(u.id)}"><div class="portrait">${escape(u.name[0]?.toUpperCase()||'?')}</div><strong>${escape(u.name)}</strong><span>${u.muted?'Mic off':u.status==='connected'?'In call':u.id===grant?.userId?'You':'Invited teammate'}</span><div class="voice-bar"><i></i></div></div>`).join('');
 }
-async function publish(event:string){if(!callId){return;}await api(`/rooms/${grant.room.id}/call`,{event,callId,muted,status:joined?'connected':'connecting'});}
+async function publish(event:string){if(!callId){return;}await api(`/rooms/${grant.room.id}/call`,{event,callId,muted,status:joined?'connected':'connecting'});nextHeartbeatAt=Date.now()+20000;}
 async function leave(){if(callId){const result=await engine.endCall({callId});if(result.code!==0){throw new Error('Nexconn could not end this call ('+result.code+'). Retry.');}await publish('leave').catch(()=>undefined);callId='';incoming='';joined=false;state='Call ended';element('level').textContent='Microphone idle';render();}}
-async function toggleMute(){const result=await engine.enableMicrophone(muted);if(result.code!==0){throw new Error('Microphone control failed ('+result.code+').');}muted=!muted;await publish('heartbeat');render();}
+async function toggleMute(){const result=await engine.enableMicrophone(muted);if(result.code!==0){throw new Error('Microphone control failed ('+result.code+').');}muted=!muted;try{await publish('heartbeat');}finally{render();}}
 async function enter(){
  element('error').hidden=true;const button=element('join') as HTMLButtonElement;button.disabled=true;
  try{
@@ -47,8 +57,9 @@ async function boot(){
   state='Ready for your team';await tick();render();
  }catch(error){state='Connection unavailable';showError((error as Error).message);(element('join') as HTMLButtonElement).disabled=true;render();}
 }
-async function tick(){if(!grant||ticking){return;}ticking=true;try{const result=await api(`/rooms/${grant.room.id}/call`);if(!callId&&result.call?.participants?.length){callId=result.call.callId;}roster=result.call?.participants||[];if(!joined&&!incoming){state=roster.length?'A huddle is in progress':'Ready for your team';}if(joined){await publish('heartbeat');}if(result.control&&result.control.id!==lastControl){lastControl=result.control.id;if(result.control.action==='leave'){await leave();}if(result.control.action==='mute'&&joined){await toggleMute();}}render();}catch(error){showError((error as Error).message);}finally{ticking=false;}}
+async function tick(){if(!grant||ticking||!retryPolicy.canPoll||(!joined&&document.hidden)||Date.now()<nextPollAt){return;}nextPollAt=Date.now()+(joined?10000:30000);ticking=true;try{const result=await api(`/rooms/${grant.room.id}/call`);if(!callId&&result.call?.participants?.length){callId=result.call.callId;}roster=result.call?.participants||[];if(!joined&&!incoming){state=roster.length?'A huddle is in progress':'Ready for your team';}if(result.control&&result.control.id!==lastControl){lastControl=result.control.id;if(result.control.action==='leave'){await leave();}if(result.control.action==='mute'&&joined){await toggleMute();}}if(joined&&Date.now()>=nextHeartbeatAt){await publish('heartbeat');}render();}catch(error){showError((error as Error).message);}finally{ticking=false;}}
 element('join').addEventListener('click',()=>void enter());element('mute').addEventListener('click',()=>void toggleMute().catch(e=>showError(e.message)));element('leave').addEventListener('click',()=>void leave().catch(e=>showError(e.message)));
 element('retry').addEventListener('click',()=>location.reload());
+document.addEventListener('visibilitychange',()=>{if(!document.hidden){void tick();}});
 window.addEventListener('pagehide',()=>{if(grant&&callId){void fetch(`/rooms/${grant.room.id}/call`,{method:'POST',keepalive:true,headers:{'Content-Type':'application/json',Authorization:'Bearer '+grant.sessionToken},body:JSON.stringify({event:'leave',callId})});void engine?.endCall({callId});}});
-setInterval(()=>void tick(),3000);setInterval(()=>{element('timer').textContent=startedAt&&joined?new Date(Date.now()-Date.parse(startedAt)).toISOString().slice(14,19):'AUDIO ONLY';},1000);void boot();
+setInterval(()=>void tick(),10000);setInterval(()=>{element('timer').textContent=startedAt&&joined?new Date(Date.now()-Date.parse(startedAt)).toISOString().slice(14,19):'AUDIO ONLY';},1000);void boot();

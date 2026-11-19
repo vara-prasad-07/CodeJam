@@ -52,7 +52,17 @@ export function createFirestoreStore({projectId=process.env.FIREBASE_PROJECT_ID|
   let response;try{response=await fetchImpl(url,{method,headers:{'Content-Type':'application/json',Authorization:'Bearer '+bearer},body:body===undefined?undefined:JSON.stringify(body),signal:AbortSignal.timeout(15000)});}catch{const e=new Error('Firestore is unreachable. Check the network and retry.');e.status=503;throw e;}
   const result=await response.json().catch(()=>({}));
   if(response.status===404){return null;}
-  if(!response.ok){const e=new Error(`Firestore ${result.error?.status||response.status}. Check the configured project and database access.`);const conflict=response.status===409||response.status===412||(result.error?.status==='FAILED_PRECONDITION'&&Object.hasOwn(query,'currentDocument.updateTime'));e.status=conflict?409:503;throw e;}
+  if(!response.ok){
+   if(response.status===429||result.error?.status==='RESOURCE_EXHAUSTED'){
+    // Return only quota identifiers, never raw provider messages or credentials.
+    const metadata=(result.error?.details||[]).find(d=>d['@type']==='type.googleapis.com/google.rpc.ErrorInfo')?.metadata||{};
+    const safeLabel=value=>typeof value==='string'&&/^[a-zA-Z0-9_ ./:()-]{1,180}$/.test(value)?value:undefined;
+    const quota={metric:safeLabel(metadata.quota_metric),limit:safeLabel(metadata.quota_limit)};
+    const e=new Error(`Firestore quota or capacity limit reached.${quota.limit?' Limit: '+quota.limit+'.':''} Check this project's Firestore API quotas before retrying.`);
+    Object.assign(e,{status:429,code:'FIRESTORE_RESOURCE_EXHAUSTED',quota,retryAfterSeconds:600});throw e;
+   }
+   const e=new Error(`Firestore ${result.error?.status||response.status}. Check the configured project and database access.`);const conflict=response.status===409||response.status===412||(result.error?.status==='FAILED_PRECONDITION'&&Object.hasOwn(query,'currentDocument.updateTime'));e.status=conflict?409:503;throw e;
+  }
   return result;
  }
  return {

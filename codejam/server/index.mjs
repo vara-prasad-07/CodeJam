@@ -97,7 +97,7 @@ export async function createRoomServer({store=createFirestoreStore(),nexconn=cre
   if(req.method==='POST'&&resource==='invite'){const updated=await mutate('codejam_rooms',id,r=>({...r,invite:'cdj-'+randomBytes(18).toString('hex'),inviteExpiresAt:Date.now()+7*86400000}));return {room:publicRoom(updated)};}
   if(req.method==='GET'&&resource==='details'){
    const[pins,discussions,presence,reactions,call]=await Promise.all([store.list(collection('pins')),store.list(collection('discussions')),store.list(collection('presence')),store.list(collection('reactions')),store.get(collection('state'),'call')]);
-   return {pins,discussions,presence:presence.filter(p=>Date.now()-p.lastSeen<45000),reactions,call:call&&Date.now()-call.lastSeen<90000?call:null};
+   return {pins,discussions,presence:presence.filter(p=>Date.now()-p.lastSeen<90000),reactions,call:call&&Date.now()-call.lastSeen<90000?call:null};
   }
   if(req.method==='POST'&&resource==='presence'){
    const focus=String(body.focus||'Working in the project').slice(0,180);await store.put(collection('presence'),user.id,{id:user.id,name:user.name,focus,lastSeen:Date.now()});return {ok:true};
@@ -128,13 +128,13 @@ export async function createRoomServer({store=createFirestoreStore(),nexconn=cre
    const call=await mutate(collection('state'),'call',current=>{
     if(body.event==='leave'){return {...(current||{}),participants:(current?.participants||[]).filter(p=>p.id!==user.id),lastSeen:Date.now()};}
     if(!text(body.callId,200)){fail(400,'A Nexconn call ID is required.');}if(!['start','join','heartbeat'].includes(body.event)){fail(400,'Unknown call event.');}
-    const old=current?.callId===body.callId?current:null,participants=(old?.participants||[]).filter(p=>p.id!==user.id&&Date.now()-p.lastSeen<45000);participants.push({id:user.id,name:user.name,muted:Boolean(body.muted),status:body.status==='connected'?'connected':'connecting',lastSeen:Date.now()});
+    const old=current?.callId===body.callId?current:null,participants=(old?.participants||[]).filter(p=>p.id!==user.id&&Date.now()-p.lastSeen<90000);participants.push({id:user.id,name:user.name,muted:Boolean(body.muted),status:body.status==='connected'?'connected':'connecting',lastSeen:Date.now()});
     return {callId:body.callId,hostId:old?.hostId||user.id,startedAt:old?.startedAt||now(),participants,lastSeen:Date.now()};
    });return {call};
   }
   fail(404,'Endpoint not found.');
  }
- const server=http.createServer(async(req,res)=>{try{const data=await route(req,res);if(!res.writableEnded){res.writeHead(200,{'Content-Type':'application/json'});res.end(JSON.stringify(data));}}catch(error){if(!res.writableEnded){res.writeHead(error.status||500,{'Content-Type':'application/json','Cache-Control':'no-store'});res.end(JSON.stringify({error:error.status?error.message:'The server could not complete the request. Retry; check backend configuration if it persists.'}));}}});server.requestTimeout=60000;
+ const server=http.createServer(async(req,res)=>{try{const data=await route(req,res);if(!res.writableEnded){res.writeHead(200,{'Content-Type':'application/json'});res.end(JSON.stringify(data));}}catch(error){if(!res.writableEnded){if(error.retryAfterSeconds){res.setHeader('Retry-After',String(error.retryAfterSeconds));}res.writeHead(error.status||500,{'Content-Type':'application/json','Cache-Control':'no-store'});res.end(JSON.stringify({error:error.status?error.message:'The server could not complete the request. Retry; check backend configuration if it persists.',...(error.code==='FIRESTORE_RESOURCE_EXHAUSTED'?{code:error.code,quota:error.quota}:{})}));}}});server.requestTimeout=60000;
  const cleanup=setInterval(()=>{for(const map of[tickets,loginRequests]){for(const[key,value]of map){if(value.expiresAt<Date.now()){map.delete(key);}}}for(const[key,value]of rates){if(value.until<Date.now()){rates.delete(key);}}},30000);cleanup.unref();server.on('close',()=>clearInterval(cleanup));return server;
 }
 export function listenAddress(env=process.env){return {port:Number(env.PORT||3000),host:env.HOST||(env.RENDER==='true'?'0.0.0.0':'127.0.0.1')};}

@@ -33,3 +33,22 @@ test('Firestore HTTP 400 version-precondition failures are conflicts, not servic
  await assert.rejects(store.put('codejam_rooms','one',{id:'one'},'stale-version'),e=>e.status===409);
  await assert.rejects(store.put('codejam_rooms','one',{id:'one'}),e=>e.status===503);
 });
+
+test('Firestore quota errors preserve safe identifiers and advise backoff without exposing provider payloads',async()=>{
+ const store=createFirestoreStore({projectId:'test-project',getAccessToken:async()=>'private-token',fetchImpl:async()=>({ok:false,status:429,json:async()=>({error:{status:'RESOURCE_EXHAUSTED',message:'private-provider-payload',details:[{'@type':'type.googleapis.com/google.rpc.ErrorInfo',metadata:{quota_metric:'firestore.googleapis.com/read_operations',quota_limit:'ReadOperationsPerDay',credential:'private-credential'}}]}})})});
+ await assert.rejects(store.get('codejam_meta','marker'),e=>{
+  assert.equal(e.status,429);assert.equal(e.code,'FIRESTORE_RESOURCE_EXHAUSTED');assert.equal(e.retryAfterSeconds,600);
+  assert.deepEqual(e.quota,{metric:'firestore.googleapis.com/read_operations',limit:'ReadOperationsPerDay'});
+  assert.match(e.message,/ReadOperationsPerDay/);assert.ok(!JSON.stringify(e).includes('private-'));return true;
+ });
+});
+
+test('backend sends a machine-readable quota error and Retry-After to clients',async t=>{
+ const {createRoomServer}=await import('./index.mjs');
+ const failure=Object.assign(new Error('Firestore quota or capacity limit reached.'),{status:429,code:'FIRESTORE_RESOURCE_EXHAUSTED',retryAfterSeconds:600,quota:{limit:'ReadOperationsPerDay'}});
+ const server=await createRoomServer({migrate:false,store:{get:async()=>{throw failure;}},auth:{password:async()=>({uid:'test'})},nexconn:{},ai:{}});
+ await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));t.after(()=>new Promise(resolve=>server.close(resolve)));
+ const response=await fetch(`http://127.0.0.1:${server.address().port}/auth/password`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({mode:'login'})});
+ assert.equal(response.status,429);assert.equal(response.headers.get('Retry-After'),'600');
+ assert.deepEqual(await response.json(),{error:failure.message,code:failure.code,quota:failure.quota});
+});

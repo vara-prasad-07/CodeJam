@@ -4,10 +4,14 @@ import * as path from 'node:path';
 import { realpath } from 'node:fs/promises';
 import { detectRepository, readGitDiff, Repository } from './repository';
 import { createMessage, createRoom, LocalState, Room, ChatMessage } from './model';
+import { RefreshPolicy } from './refreshPolicy';
 
 export function activate(context: vscode.ExtensionContext) {
  const views = new Set<vscode.Webview>();
  const readyViews = new Set<vscode.Webview>();
+ const visibleViews = new Set<vscode.Webview>();
+ const refreshPolicy = new RefreshPolicy();
+ let backgroundQueued = false;
  let shared: LocalState = { rooms: [] }, repo: Repository | undefined;
  let selectedFolder = context.workspaceState.get<string>('codejam.folder');
  let connection = 'Connecting to Nexconn…', refreshing = false, serverUserId = '';
@@ -23,7 +27,7 @@ export function activate(context: vscode.ExtensionContext) {
  const apiUrl = () => config().get<string>('apiUrl', 'https://codejam-vdmp.onrender.com').trim().replace(/\/$/, '');
  const browserUrl = () => { const url = new URL(apiUrl()); if (url.hostname === '127.0.0.1') { url.hostname = 'localhost'; } return url.origin; };
  const name = () => config().get<string>('displayName', '').trim() || 'Developer';
- const snapshot = () => ({ type: 'state', ...shared, repo, mode: 'nexconn', connection, connected: sdkConnected, userId: serverUserId, displayName: account?.name || name(), user: account, authenticated: Boolean(account) && !needsAuth, aiConfigured, linked: linked() });
+ const snapshot = () => ({ type: 'state', ...shared, repo, mode: 'nexconn', connection, connected: sdkConnected, updatesPaused: !refreshPolicy.canPoll, userId: serverUserId, displayName: account?.name || name(), user: account, authenticated: Boolean(account) && !needsAuth, aiConfigured, linked: linked() });
  const broadcast = async () => { await Promise.all([...views].map(v => v.postMessage(snapshot()))); };
  const notice = (webview: vscode.Webview, text: string) => webview.postMessage({ type: 'notice', text });
  const activeRoom = () => shared.rooms.find(r => r.id === shared.active);
@@ -38,9 +42,16 @@ export function activate(context: vscode.ExtensionContext) {
   const perform = async (target: string, payload?: unknown, bearer?: string) => {
    let response: Response;
    try { response = await fetch(base + target, { method: payload === undefined ? 'GET' : 'POST', headers: { 'Content-Type': 'application/json', ...(bearer ? { Authorization: `Bearer ${bearer}` } : {}) }, body: payload === undefined ? undefined : JSON.stringify(payload), signal: AbortSignal.timeout(route.endsWith('/draft') ? 60000 : 20000) }); }
-   catch { throw new Error('Cannot reach the CodeJam backend. The hosted service may be waking up. Wait a minute, check codejam.apiUrl, then retry.'); }
+   catch { const error = Object.assign(new Error('Cannot reach the CodeJam backend. The hosted service may be waking up. Wait a minute, check codejam.apiUrl, then retry.'), {status:0}); refreshPolicy.failed(error); throw error; }
    const data = await response.json() as any;
-   if (!response.ok) { if (response.status === 401) { needsAuth = true; } const error = new Error(data.error || `Room server returned ${response.status}.`) as Error & {status:number}; error.status = response.status; throw error; }
+   if (!response.ok) {
+    if (response.status === 401) { needsAuth = true; }
+    const retryAfter = Number(response.headers?.get('Retry-After'));
+    const quota = data.code === 'FIRESTORE_RESOURCE_EXHAUSTED' || /Firestore.*RESOURCE_EXHAUSTED/i.test(data.error || '');
+    const quotaMessage = data.code === 'FIRESTORE_RESOURCE_EXHAUSTED' ? data.error : 'Firestore quota or capacity limit reached. Check the project’s Firestore quotas before retrying.';
+    const error = Object.assign(new Error(quota ? quotaMessage + ' Background refresh is paused.' : data.error || `Room server returned ${response.status}.`), {status:response.status,code:data.code,retryAfterMs:Number.isFinite(retryAfter) ? Math.max(0,retryAfter)*1000 : 0});
+    refreshPolicy.failed(error); throw error;
+   }
    return data;
   };
   if (!token && !route.startsWith('/auth/')) { needsAuth = true; throw new Error('Sign in with email/password or Google to continue.'); }
@@ -91,21 +102,34 @@ export function activate(context: vscode.ExtensionContext) {
   await sdk('connect', session); // Only this selected webview receives the public key and per-user token.
   sdkConnected = true; connection = 'Connected to Nexconn';
  }
- async function refresh() {
+ async function refresh(background = false) {
   if (refreshing) { return; }
+  if (background && (!visibleViews.size || needsAuth || !refreshPolicy.canPoll)) { return; }
   refreshing = true;
   try {
    const folders = vscode.workspace.workspaceFolders || [];
    const folder = folders.find(f => f.uri.fsPath === selectedFolder) || folders[0];
    repo = folder ? await detectRepository(folder.uri.fsPath) : undefined;
    try {
-    const result = await request('/rooms'); serverUserId = result.userId; account = result.user || {id: result.userId, name: name()}; needsAuth = false; aiConfigured = result.aiConfigured === true;
-    const active = shared.active || context.workspaceState.get<string>(`codejam.active.nexconn.${apiUrl()}`);
-    shared = { rooms: result.rooms.map((r: Room) => ({ ...r, messages: (shared.rooms.find(old => old.id === r.id)?.messages || []).map(m => ({ ...m, author: r.members.find(member => member.id === m.userId)?.name || m.author })), hasMore: shared.rooms.find(old => old.id === r.id)?.hasMore })), active: result.rooms.some((r: Room) => r.id === active) ? active : result.rooms[0]?.id };
-    if (activeRoom()) { await refreshDetails(); const editor = vscode.window.activeTextEditor; const relative = editor && repo ? path.relative(repo.root, editor.document.uri.fsPath) : '..'; const focus = editor && !relative.startsWith('..') && !path.isAbsolute(relative) ? relative.replace(/\\/g,'/') + ':' + (editor.selection.active.line + 1) : 'Working in the project'; await request(`/rooms/${shared.active}/presence`, {focus}).catch(() => undefined); }
+    if (!background || refreshPolicy.roomsDue) {
+     const result = await request('/rooms'); serverUserId = result.userId; account = result.user || {id: result.userId, name: name()}; needsAuth = false; aiConfigured = result.aiConfigured === true;
+     const active = shared.active || context.workspaceState.get<string>(`codejam.active.nexconn.${apiUrl()}`);
+     shared = { rooms: result.rooms.map((r: Room) => { const old = shared.rooms.find(room => room.id === r.id); return {...old,...r,messages:(old?.messages || []).map(m => ({...m,author:r.members.find(member => member.id === m.userId)?.name || m.author})),hasMore:old?.hasMore}; }), active: result.rooms.some((r: Room) => r.id === active) ? active : result.rooms[0]?.id };
+     refreshPolicy.roomsLoaded();
+    }
+    const r = activeRoom();
+    if (r) {
+     if (!background || refreshPolicy.detailsDue(r.id)) { await refreshDetails(); }
+     if (refreshPolicy.presenceDue(r.id)) {
+      const editor = vscode.window.activeTextEditor; const relative = editor && repo ? path.relative(repo.root, editor.document.uri.fsPath) : '..';
+      const focus = editor && !relative.startsWith('..') && !path.isAbsolute(relative) ? relative.replace(/\\/g,'/') + ':' + (editor.selection.active.line + 1) : 'Working in the project';
+      await request(`/rooms/${r.id}/presence`, {focus}); refreshPolicy.presenceSent(r.id);
+     }
+    }
     await ensureChat();
     if (shared.active && !loaded.has(shared.active)) { await loadHistory(); }
     connection = sdkConnected ? 'Connected to Nexconn' : 'Waiting for the Nexconn SDK client';
+    refreshPolicy.succeeded();
    } catch (error) { connection = (error as Error).message; }
    await broadcast();
   } finally { refreshing = false; }
@@ -113,9 +137,11 @@ export function activate(context: vscode.ExtensionContext) {
  async function refreshDetails() {
   const r = activeRoom(); if (!r) { return; }
   const details = await request('/rooms/' + r.id + '/details'); Object.assign(r,details);
+  refreshPolicy.detailsLoaded(r.id);
  }
  function findSource(id:string) { const r = activeRoom(); return r?.messages.find(m => m.id === id) || r?.discussions?.find(d => d.source.id === id)?.source || r?.pins?.find(p => p.source.id === id)?.source; }
  async function acceptSession(result:any) {
+  refreshPolicy.reset();
   if (sdkOwner && sdkConnected) { await sdk('disconnect'); } sdkConnected = false; loaded.clear(); contexts.clear(); shared = {rooms:[]};
   await context.secrets.store('codejam.session.nexconn.' + apiUrl(), result.token); account = result.user; serverUserId = result.user.id; needsAuth = false;
  }
@@ -258,6 +284,7 @@ export function activate(context: vscode.ExtensionContext) {
    if (operation) { await webview.postMessage({ type: 'result', operation, ok: true }); }
   } catch (error) {
    await notice(webview, (error as Error).message);
+   if (!refreshPolicy.canPoll) { await broadcast(); }
    if (operation) { await webview.postMessage({ type: 'result', operation, ok: false }); }
   }
  }
@@ -265,10 +292,21 @@ export function activate(context: vscode.ExtensionContext) {
   views.delete(webview);
   readyViews.delete(webview);
   for (const [id, pending] of rpc) { if (pending.owner === webview) { clearTimeout(pending.timer); pending.reject(new Error('The Nexconn client view closed. Retry from the other CodeJam view.')); rpc.delete(id); } }
-  if (sdkOwner === webview) { sdkOwner = [...readyViews][0]; sdkConnected = false; loaded.clear(); if (sdkOwner) { queue = queue.then(refresh); } }
+  visibleViews.delete(webview);
+  if (sdkOwner === webview) { sdkOwner = [...readyViews][0]; sdkConnected = false; loaded.clear(); if (sdkOwner) { queue = queue.then(() => refresh()); } }
  }
- const setup = (webview: vscode.Webview) => {
+ function setVisible(webview: vscode.Webview, visible: boolean) {
+  if (visible) { visibleViews.add(webview); if (readyViews.has(webview)) { scheduleBackground(); } }
+  else { visibleViews.delete(webview); }
+ }
+ function scheduleBackground() {
+  if (backgroundQueued || refreshing || !visibleViews.size || needsAuth || !refreshPolicy.canPoll) { return; }
+  backgroundQueued = true;
+  queue = queue.then(() => refresh(true)).catch(() => undefined).finally(() => { backgroundQueued = false; });
+ }
+ const setup = (webview: vscode.Webview, visible = true) => {
   views.add(webview);
+  setVisible(webview, visible);
   webview.options = { enableScripts: true, localResourceRoots: [vscode.Uri.joinPath(context.extensionUri, 'media')] };
   const resource = (file: string) => webview.asWebviewUri(vscode.Uri.joinPath(context.extensionUri, 'media', file));
   const nonce = randomBytes(16).toString('hex');
@@ -283,13 +321,17 @@ export function activate(context: vscode.ExtensionContext) {
    else if (input?.type === 'sdkStatus' && sdkOwner === webview) {
     const wasConnected = sdkConnected; sdkConnected = input.connected === true;
     connection = sdkConnected ? 'Connected to Nexconn' : `Nexconn reconnecting${input.code ? ` (code ${input.code})` : ''}…`;
-    if (!wasConnected && sdkConnected) { loaded.clear(); queue = queue.then(refresh); }
+    if (!wasConnected && sdkConnected) { loaded.clear(); scheduleBackground(); }
     void broadcast();
    } else { queue = queue.then(() => handle(webview, input)).catch(() => undefined); }
   }));
  };
  context.subscriptions.push(vscode.window.registerWebviewViewProvider('codejam.workspace', {
-  resolveWebviewView(view) { setup(view.webview); view.onDidDispose(() => release(view.webview)); }
+  resolveWebviewView(view) {
+   setup(view.webview, view.visible);
+   context.subscriptions.push(view.onDidChangeVisibility?.(() => setVisible(view.webview, view.visible)) || {dispose(){}});
+   view.onDidDispose(() => release(view.webview));
+  }
  }, { webviewOptions: { retainContextWhenHidden: true } }));
  context.subscriptions.push(vscode.workspace.registerTextDocumentContentProvider('codejam-snapshot', {provideTextDocumentContent: uri => snapshots.get(uri.toString()) || 'Shared revision unavailable.'}));
  context.subscriptions.push(vscode.commands.registerCommand('codejam.shareSelection', async () => {
@@ -301,22 +343,24 @@ export function activate(context: vscode.ExtensionContext) {
  context.subscriptions.push(vscode.commands.registerCommand('codejam.resetSession', async () => {
   queue = queue.then(async () => {
    if (sdkOwner) { try { await sdk('disconnect'); } catch { /* View may be closed. */ } }
-   await context.secrets.delete(`codejam.session.nexconn.${apiUrl()}`); shared = { rooms: [] }; loaded.clear(); sdkConnected = false; await refresh();
+   await context.secrets.delete(`codejam.session.nexconn.${apiUrl()}`); shared = { rooms: [] }; loaded.clear(); sdkConnected = false; refreshPolicy.reset(); await refresh();
   });
   await vscode.window.showInformationMessage('CodeJam session reset. Sign in again to restore your rooms.');
  }));
  context.subscriptions.push(vscode.commands.registerCommand('codejam.openPanel', () => {
   const panel = vscode.window.createWebviewPanel('codejam.workspacePanel', 'CodeJam', vscode.ViewColumn.One, { enableScripts: true, retainContextWhenHidden: true });
-  setup(panel.webview); panel.onDidDispose(() => release(panel.webview));
+  setup(panel.webview, panel.visible);
+  context.subscriptions.push(panel.onDidChangeViewState?.(() => setVisible(panel.webview, panel.visible)) || {dispose(){}});
+  panel.onDidDispose(() => release(panel.webview));
  }));
- context.subscriptions.push(vscode.workspace.onDidChangeWorkspaceFolders(() => { queue = queue.then(refresh); }));
+ context.subscriptions.push(vscode.workspace.onDidChangeWorkspaceFolders(() => { queue = queue.then(() => refresh()); }));
  context.subscriptions.push(vscode.workspace.onDidChangeConfiguration(e => {
   if (e.affectsConfiguration('codejam')) { queue = queue.then(async () => {
    if (sdkOwner) { try { await sdk('disconnect'); } catch { /* Reconnect below. */ } }
-   shared = { rooms: [] }; loaded.clear(); sdkConnected = false; await refresh();
+   shared = { rooms: [] }; loaded.clear(); sdkConnected = false; refreshPolicy.reset(); await refresh();
   }); }
  }));
- const timer = setInterval(() => { if (views.size && !refreshing) { queue = queue.then(refresh).catch(() => undefined); } }, 10000);
+ const timer = setInterval(scheduleBackground, 30000);
  context.subscriptions.push({ dispose: () => { clearInterval(timer); for (const pending of rpc.values()) { clearTimeout(pending.timer); pending.reject(new Error('CodeJam deactivated.')); } } });
 }
 export function deactivate() {}

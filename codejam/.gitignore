@@ -19,3 +19,8 @@ media/nexconn.js.map
 server/public/call.js
 server/public/auth.js
 server/public/*.map
+
+# Never commit Firebase service-account private keys.
+server/secrets/
+**/*service-account*.json
+**/*firebase-adminsdk*.json

@@ -1,6 +1,6 @@
 ﻿import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { createRoomServer } from './index.mjs';
+import { createRoomServer, listenAddress } from './index.mjs';
 import { createMemoryStore } from './firestore.mjs';
 const setup=async(t)=>{
  const store=createMemoryStore(),calls=[];let rejectGroup=false;
@@ -58,4 +58,11 @@ test('browser login and call tickets are one-time, expire by scope, and never au
  assert.equal((await h.api('/auth/browser/complete',{ticket:start.ticket,idToken:'valid-google-token'})).status,200);
  const result=(await h.api('/auth/browser/claim',{id:start.id,proof:start.proof})).data;assert.equal(result.user.email,'google@example.test');assert.equal((await h.api('/auth/browser/claim',{id:start.id,proof:start.proof})).status,403);
  const config=(await h.api('/auth/config')).data;assert.ok(!('NEXCONN_APP_SECRET'in config));
+});
+
+
+test('Render listens publicly on the platform port while local development stays on loopback',()=>{
+ assert.deepEqual(listenAddress({RENDER:'true',PORT:'10000'}),{host:'0.0.0.0',port:10000});
+ assert.deepEqual(listenAddress({}),{host:'127.0.0.1',port:3000});
+ assert.deepEqual(listenAddress({RENDER:'true',HOST:'0.0.0.0',PORT:'4321'}),{host:'0.0.0.0',port:4321});
 });

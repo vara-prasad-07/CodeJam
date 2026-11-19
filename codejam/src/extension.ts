@@ -20,7 +20,7 @@ export function activate(context: vscode.ExtensionContext) {
  const snapshots = new Map<string, string>();
  const linked = () => { const room = activeRoom(); return Boolean(room && repo && ((!room.repositoryIdentity || room.repositoryIdentity === repo.identity) || context.workspaceState.get<Record<string,string>>('codejam.links', {})[repo.root] === room.id)); };
  const config = () => vscode.workspace.getConfiguration('codejam');
- const apiUrl = () => config().get<string>('apiUrl', 'http://127.0.0.1:3000').trim().replace(/\/$/, '');
+ const apiUrl = () => config().get<string>('apiUrl', 'https://codejam-vdmp.onrender.com').trim().replace(/\/$/, '');
  const browserUrl = () => { const url = new URL(apiUrl()); if (url.hostname === '127.0.0.1') { url.hostname = 'localhost'; } return url.origin; };
  const name = () => config().get<string>('displayName', '').trim() || 'Developer';
  const snapshot = () => ({ type: 'state', ...shared, repo, mode: 'nexconn', connection, connected: sdkConnected, userId: serverUserId, displayName: account?.name || name(), user: account, authenticated: Boolean(account) && !needsAuth, aiConfigured, linked: linked() });
@@ -31,14 +31,14 @@ export function activate(context: vscode.ExtensionContext) {
  async function request(route: string, body?: unknown): Promise<any> {
   const base = apiUrl();
   let url: URL;
-  try { url = new URL(base); } catch { throw new Error('Set codejam.apiUrl to the backend URL, usually http://127.0.0.1:3000.'); }
+  try { url = new URL(base); } catch { throw new Error('Set codejam.apiUrl to https://codejam-vdmp.onrender.com or your CodeJam backend URL.'); }
   if (url.protocol !== 'https:' && !(url.protocol === 'http:' && ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname))) { throw new Error('Use HTTPS for a remote server, or HTTP on localhost.'); }
   const secretKey = `codejam.session.nexconn.${base}`;
   let token = await context.secrets.get(secretKey);
   const perform = async (target: string, payload?: unknown, bearer?: string) => {
    let response: Response;
    try { response = await fetch(base + target, { method: payload === undefined ? 'GET' : 'POST', headers: { 'Content-Type': 'application/json', ...(bearer ? { Authorization: `Bearer ${bearer}` } : {}) }, body: payload === undefined ? undefined : JSON.stringify(payload), signal: AbortSignal.timeout(route.endsWith('/draft') ? 60000 : 20000) }); }
-   catch { throw new Error('Cannot reach the CodeJam backend. Run npm run server in codejam, check codejam.apiUrl, then retry.'); }
+   catch { throw new Error('Cannot reach the CodeJam backend. The hosted service may be waking up. Wait a minute, check codejam.apiUrl, then retry.'); }
    const data = await response.json() as any;
    if (!response.ok) { if (response.status === 401) { needsAuth = true; } const error = new Error(data.error || `Room server returned ${response.status}.`) as Error & {status:number}; error.status = response.status; throw error; }
    return data;

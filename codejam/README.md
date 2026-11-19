@@ -1,76 +1,68 @@
 # CodeJam
 
-VS Code collaboration with repository context, Nexconn chat/audio, Firestore discussions and decisions, Firebase sign-in, and reviewed Gemini drafts.
+Team conversations, shared code and decisions beside your editor.
 
-## Run next time
+CodeJam brings repository-aware chat, code discussions, searchable decisions, reviewed AI drafts and audio huddles into VS Code. Open the sidebar for quick updates or use **CodeJam: Open Full View** for more space.
 
-From the outer **CodeJam** folder:
+**Early preview:** the current hosted service is a prototype. Its Firestore configuration uses open access rules and is not suitable for confidential or production data. Read [Privacy](PRIVACY.md) and [Security](SECURITY.md) before connecting.
 
-```powershell
-npm --prefix codejam install
-npm --prefix codejam run compile
-npm --prefix codejam run server
-```
+## Start collaborating
 
-Keep the backend running. In **Run and Debug**, select **CodeJam - Two People** and press **F5**. For only the second independent window:
+1. Install CodeJam and open your project folder in VS Code.
+2. Run **CodeJam: Open Workspace** or click the CodeJam activity icon.
+3. Sign in with email/password or Continue with Google.
+4. Create a room and share its invitation. Your teammate signs in with their own account and joins using that invitation.
 
-```powershell
-npm --prefix codejam run test:person2
-```
+CodeJam connects to `https://codejam-vdmp.onrender.com` by default. Hosted-service users need no API keys or local backend. An existing `codejam.apiUrl` setting overrides this default.
 
-In each development window open the project checkout and run **CodeJam: Open Full View**. Sign in with **different Firebase accounts**. Create a room in A, copy its invitation, and join in B. Both windows use the same backend. Changing a display name does not create another account. Inside the inner `codejam` folder omit `--prefix codejam`. Restart the backend after `.env` changes.
+## Keep code in context
 
-## Credentials
+The header shows your Git branch, latest commit and working-tree state. Select code in the editor and choose **Share Selection with Team** to send a reference with relative path, line range, branch, revision and selected excerpt.
 
-The backend reads **server/.env**; keep your existing values private. See [the template](server/.env.example).
+Open a reference in your checkout. When your revision differs, inspect the saved excerpt and working-copy diff. Opening a reference does not execute snippets or edit files.
 
-| Setting | Purpose |
-| --- | --- |
-| `NEXCONN_APP_KEY`, `NEXCONN_APP_SECRET` | Nexconn identities, groups, chat and calls |
-| `NEXCONN_REGION` | SG (default), NA or SA; match your application |
-| `apiKey`, `authDomain`, `projectId`, `appId` | Firebase web configuration; uppercase `FIREBASE_*` equivalents supported |
-| `GEMINI_API_KEY` | Private AI drafts |
-| `GEMINI_MODEL` | Optional text model; otherwise discovered automatically |
-| `HOST`, `PORT` | Defaults to 127.0.0.1:3000 |
+## Turn conversations into decisions
 
-Current Firebase, Nexconn and Gemini credentials passed live integration testing. No additional key is required for the local workflow. Enable Email/Password and Google in Firebase Authentication. Add **localhost** to Authentication > Settings > Authorized domains for Google. Enable audio calling for the Nexconn application if needed.
+- Exchange messages, replies and mentions through Nexconn Chat.
+- Open a focused discussion from a message or code excerpt.
+- Reply, react and resolve or reopen a discussion.
+- Pin a decision and search by title, text or path.
+- Reopen rooms and load earlier cloud history.
 
-Google opens your browser at `http://localhost:3000/signin`. Complete the popup and return to VS Code. A short-lived one-time request transfers the verified identity. The extension saves its own opaque session in VS Code SecretStorage, never your password. Sessions expire after 30 days.
+Mention names containing spaces with underscores: `@First_Last`.
 
-## Features
+## Review AI drafts before sharing
 
-- Connect: create/join rooms, expiring invitations and renewal, repository identity, branch, latest commit/author/time, dirty status and account-based room restoration.
-- Chat: actual Nexconn SDK send/receive, cloud history pagination, replies, mentions (`@First_Last`), selected code and failed-send draft retention. Sidebar/full view share one SDK connection.
-- Discussions: persistent threads, replies, resolve/reopen, reactions, path/lines/branch/commit, revision warnings, saved excerpt versus working-copy diff and local file opening.
-- Decisions: pin a message/thread, search title/text/path, inspect its source and unpin with confirmation.
-- AI: ask `@agent` or use a message action. Choose code, messages and optional local Git diff. Preview context, generate a private draft, review/edit, then explicitly send under your name. Generation never posts automatically.
-- Team: recent presence with project-relative editor focus, member roster, actual call state and mini controls.
-- Audio: actual Nexconn Call SDK in a separate browser page for microphone access. Separate call identities keep editor chat connected. Start/join, allow microphone and keep the tab open. VS Code mute/leave controls operate your browser session.
+Ask `@agent` or choose the AI action on a message. Select code, room/discussion messages and optional local Git diff. Preview context, generate a private Gemini draft, then review/edit before explicitly sending under your name. Generation never posts automatically.
 
-Use **Share Selection with Team** in the editor context menu or attach selected code from the composer. Environment/private-key file selection is blocked. Diff context excludes common credential filenames. Review the preview yourself: these checks are not a comprehensive secret scanner. Shared references never execute code or modify files.
+Context goes to Gemini when you generate. File-name and credential-pattern checks are limited: review everything you select before sending.
 
-## Data and access
+## Talk through a problem
 
-Firestore stores accounts, hashed application sessions, rooms/membership, discussions, pins, reactions, presence and call controls/state. Nexconn stores chat history and message payloads. Firestore retains pinned/thread-root snapshots so context survives history pagination. Gemini receives selected context on generation.
+Open Team and start or join an audio huddle. A browser tab uses Nexconn Call to request microphone permission. Keep the tab open during the call. Mute or leave from the browser or extension controls.
 
-Existing Nexconn metadata from `server/.data/nexconn-rooms.json` migrates once; the original stays untouched. Existing development sessions can **Link an account** to retain identity/memberships. Already established Firebase accounts retain their own identity; there is no automatic account merge. Pre-Nexconn preview rooms are not converted.
+## Requirements and settings
 
-**Deployment limit:** the Firestore REST adapter uses your web API key and open database rules as requested for the prototype. Backend membership checks do not prevent direct database access under open rules. This is not production-private storage. Public deployment needs server-authenticated Firestore access and locked rules; a Firebase Admin/service-account adapter has not been configured. Keep localhost binding for this setup. Remote use also needs HTTPS, `codejam.apiUrl`, matching `CODEJAM_PUBLIC_URL` and an authorized Firebase domain.
+- VS Code 1.146.0 or later, internet access and a Firebase account created through CodeJam.
+- Git for repository metadata/diffs. Basic room use also works in a non-Git folder.
+- A browser with microphone support for huddles.
+- Teammates connected to the same backend.
 
-No automatic local database or messaging fallback exists. Acknowledged sends are deduplicated within a client lifetime; uncertain acknowledgements across a reload are not an exactly-once guarantee. Presence refreshes every 10 seconds and expires after 45 seconds. Metadata queries cap at 500 records per collection; rooms support 50 members.
+| Setting | Default | Purpose |
+| --- | --- | --- |
+| `codejam.apiUrl` | `https://codejam-vdmp.onrender.com` | Hosted or self-hosted backend URL |
+| `codejam.displayName` | `Developer` | Fallback setup/legacy name; signed-in profile names take precedence |
 
-## Verification and packaging
+Local developers can set the API URL to `http://127.0.0.1:3000`. Provider secrets belong on the backend, never in extension settings.
 
-```powershell
-npm run compile
-npm test
-npm run test:nexconn
-npm run test:project
-npm run vsix
-```
+## Preview limits
 
-Automated tests cover membership, persistence, failures, AI context boundaries, SDK bridging and UI flow. Opt-in live tests consume provider quota. `test:project` creates disposable Firebase accounts, an isolated Firestore namespace and a temporary Nexconn group, verifies actual chat/thread history, decisions, Gemini and backend restart, then cleans up. It does not place an audio call.
+The free hosted service can take time to wake after inactivity. Wait a minute and reconnect after a timeout. Presence updates periodically. Rooms support 50 members; metadata queries return up to 500 records per collection. Password reset and account deletion are not available inside the extension.
 
-Install the generated VSIX through **Extensions > ... > Install from VSIX**. Run the backend separately. The VSIX excludes credentials, backend files and test data. The package is unpublished; `codejam-team` is a local package publisher identifier.
+Google popup, rendered layout and real two-way audio still need the maintainer's final manual acceptance pass. Read the privacy disclosure before sharing code, messages or account data.
 
-See [DEMO.md](DEMO.md) for acceptance steps. Google popup, rendered layout and two-way microphone/audio still need manual verification because computer/browser access was unavailable. Public hosting, Marketplace publication and demo video upload have not been performed.
+[Support](SUPPORT.md) | [Security](SECURITY.md) | [Development](docs/DEVELOPMENT.md) | [Release history](CHANGELOG.md)
+
+## License
+
+CodeJam source is available under the [MIT license](LICENSE.txt). Bundled third-party SDKs retain their own licenses; see [Third-party notices](THIRD_PARTY_NOTICES.md). The MIT license does not grant rights to third-party services or SDKs.

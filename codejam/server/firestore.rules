@@ -1,0 +1,9 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Browser/extension clients use CodeJam's backend; Admin/IAM bypasses these rules.
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

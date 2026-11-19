@@ -1,8 +1,8 @@
 {
   "name": "codejam",
   "displayName": "CodeJam",
-  "description": "Team chat, code discussions, decisions, reviewed AI handoffs, and Nexconn audio inside VS Code.",
-  "version": "1.0.0",
+  "description": "Repository-aware team chat, code discussions, searchable decisions, reviewed AI drafts, and audio huddles.",
+  "version": "1.0.3",
   "engines": {
     "vscode": "^1.146.0"
   },
@@ -53,9 +53,9 @@
       "properties": {
         "codejam.apiUrl": {
           "type": "string",
-          "default": "http://127.0.0.1:3000",
+          "default": "https://codejam-vdmp.onrender.com",
           "scope": "machine",
-          "description": "CodeJam token/room API URL. This backend uses Nexconn credentials from server/.env; messaging uses the Nexconn Chat SDK."
+          "description": "CodeJam backend URL. Defaults to the hosted service; change this for a self-hosted or local backend."
         },
         "codejam.displayName": {
           "type": "string",
@@ -95,7 +95,9 @@
     "test:nexconn": "npm run package && node --env-file=server/.env tests/live-nexconn.mjs",
     "test:person2": "node scripts/person2.cjs",
     "test:project": "npm run package && node --env-file=server/.env tests/live-project.mjs",
-    "vsix": "vsce package --no-dependencies --skip-license --baseContentUrl https://github.com/vara-prasad-07/CodeJam/blob/main/codejam --baseImagesUrl https://github.com/vara-prasad-07/CodeJam/raw/main/codejam"
+    "vsix": "vsce package --no-dependencies --out ../artifacts/ --baseContentUrl https://github.com/vara-prasad-07/CodeJam/blob/main/codejam --baseImagesUrl https://github.com/vara-prasad-07/CodeJam/raw/main/codejam",
+    "set:publisher": "node scripts/set-publisher.cjs",
+    "check:release": "node scripts/check-release.cjs"
   },
   "devDependencies": {
     "@types/mocha": "^10.0.10",
@@ -127,13 +129,38 @@
     "@nexconn/call": "26.2.1",
     "@nexconn/chat": "26.2.0",
     "@nexconn/engine": "26.2.0",
-    "firebase": "^13.4.0"
+    "firebase": "^13.4.0",
+    "firebase-admin": "^14.5.1"
   },
-  "publisher": "codejam-team",
-  "license": "UNLICENSED",
+  "publisher": "CodeJam",
+  "license": "MIT",
   "repository": {
     "type": "git",
     "url": "https://github.com/vara-prasad-07/CodeJam.git",
     "directory": "codejam"
-  }
+  },
+  "keywords": [
+    "team chat",
+    "collaboration",
+    "code review",
+    "git",
+    "developer tools",
+    "handoff",
+    "nexconn"
+  ],
+  "icon": "media/icon.png",
+  "galleryBanner": {
+    "color": "#101116",
+    "theme": "dark"
+  },
+  "author": {
+    "name": "vara-prasad-07"
+  },
+  "homepage": "https://github.com/vara-prasad-07/CodeJam#readme",
+  "bugs": {
+    "url": "https://github.com/vara-prasad-07/CodeJam/issues"
+  },
+  "markdown": "github",
+  "preview": true,
+  "qna": "marketplace"
 }

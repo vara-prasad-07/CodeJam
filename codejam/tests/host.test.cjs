@@ -8,7 +8,7 @@ const {createRequire}=require('node:module');
 
 test('extension shares one SDK connection across views and sends exclusively through the SDK bridge',async t=>{
  const folder=fs.mkdtempSync(path.join(os.tmpdir(),'codejam-host-'));t.after(()=>fs.rmSync(folder,{recursive:true,force:true}));
- const commands=new Map(),stores={workspace:new Map(),global:new Map(),secret:new Map([['codejam.session.nexconn.http://127.0.0.1:3000','application-session']])},views=[];let provider,room=null;
+ const commands=new Map(),stores={workspace:new Map(),global:new Map(),secret:new Map([['codejam.session.nexconn.https://codejam-vdmp.onrender.com','application-session']])},views=[];let provider,room=null;
  const disposable=()=>({dispose(){}});
  const makeStore=store=>({get:(key,fallback)=>store.has(key)?store.get(key):fallback,update:async(key,value)=>store.set(key,value)});
  const context={subscriptions:[],extensionUri:{fsPath:folder},workspaceState:makeStore(stores.workspace),globalState:makeStore(stores.global),secrets:{get:async key=>stores.secret.get(key),store:async(key,value)=>stores.secret.set(key,value),delete:async key=>stores.secret.delete(key)}};

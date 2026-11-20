@@ -44,7 +44,7 @@ test('extension shares one SDK connection across views and sends exclusively thr
   else if(route.endsWith('/details')){data={pins:[],discussions:[],reactions:[],presence:[],call:null};}
   else if(route.endsWith('/chat-membership')){data={ok:true};}
   else if(route.endsWith('/presence')){data={ok:true};}
-  else if(route.endsWith('/draft')){const body=JSON.parse(options.body);assert.equal(body.context.instruction,'What is an LLM?');assert.equal(body.context.repository,'');assert.deepEqual(body.context.messages,[]);assert.equal(body.context.code,null);assert.equal(body.context.diff,'');data={text:'An LLM is a large language model.',model:'test-model'};}
+  else if(route.endsWith('/agent')){const body=JSON.parse(options.body);assert.equal(body.context.instruction,'What is an LLM?');assert.equal(body.context.repository,'');assert.deepEqual(body.context.messages,[]);assert.equal(body.context.code,null);assert.equal(body.context.diff,'');assert.equal(body.context.permissions.code,false);assert.equal(body.context.permissions.messages,false);assert.equal(body.context.permissions.diff,false);data={status:'answer',text:'An LLM is a large language model.',model:'test-model'};}
   else if(route==='/rooms'){data={userId:'me',rooms:room?[room]:[]};}
   else{throw new Error('Unexpected HTTP route '+route);}
   return {ok:true,json:async()=>data};
@@ -62,12 +62,11 @@ test('extension shares one SDK connection across views and sends exclusively thr
  assert.ok(first.posts.some(p=>p.type==='sdkCommand'&&p.command==='send'));
  assert.ok(!calls.some(route=>route.endsWith('/messages')));
  assert.equal(second.posts.filter(p=>p.type==='state').at(-1).rooms[0].messages[0].id,'sdk-ack');
- second.receive({type:'prepareContext',instruction:'What is an LLM?',includeCode:false,includeMessages:false,includeDiff:false,operation:'preview-question'});
- await until(()=>second.posts.some(p=>p.type==='contextPreview'&&p.operation==='preview-question'));
- const preview=second.posts.find(p=>p.type==='contextPreview'&&p.operation==='preview-question');assert.equal(preview.context.repository,'');assert.ok(preview.contextId);
- second.receive({type:'generateDraft',contextId:preview.contextId,operation:'generate-question'});
- await until(()=>second.posts.some(p=>p.type==='draft'&&p.operation==='generate-question'));
- assert.equal(views.flatMap(v=>v.posts).filter(p=>p.type==='sdkCommand'&&p.command==='send').length,1,'a generated answer must stay private');
+ second.receive({type:'askAgent',roomId:'room1',instruction:'What is an LLM?',permissions:{code:false,messages:false,diff:false},operation:'agent-question'});
+ await until(()=>second.posts.some(p=>p.type==='agentResponse'&&p.operation==='agent-question'));
+ const answer=second.posts.find(p=>p.type==='agentResponse'&&p.operation==='agent-question');assert.equal(answer.status,'answer');assert.equal(answer.shared,false);
+ assert.equal(first.posts.some(p=>p.type==='agentResponse'),false,'the other view must not receive the private answer');
+ assert.equal(views.flatMap(v=>v.posts).filter(p=>p.type==='sdkCommand'&&p.command==='send').length,1,'generation must not publish any message');
  second.receive({type:'voiceStart',replyTo:'sdk-ack',operation:'record'});await until(()=>second.posts.some(p=>p.type==='result'&&p.operation==='record'));
  assert.equal(fakeRecorder.state.roomId,'room1');assert.equal(fakeRecorder.state.replyTo,'sdk-ack');
  first.receive({type:'sendVoice',voiceId:'local-voice',operation:'wrong-owner'});await until(()=>first.posts.some(p=>p.type==='result'&&p.operation==='wrong-owner'));
@@ -78,6 +77,10 @@ test('extension shares one SDK connection across views and sends exclusively thr
  const voiceSend=first.posts.find(p=>p.type==='sdkCommand'&&p.command==='sendVoice');assert.equal(voiceSend.input.channelId,'group1');assert.equal(voiceSend.input.clientId,'stable-voice');assert.equal(voiceSend.input.replyTo,'sdk-ack');
  assert.ok(second.posts.filter(p=>p.type==='state').at(-1).rooms[0].messages.some(m=>m.id==='sdk-voice'&&m.voice.duration===2));assert.equal(fakeRecorder.state,undefined);
  assert.ok(!calls.some(route=>route.endsWith('/messages')||route.includes('upload')),'voice transport must stay with Nexconn');
+ second.receive({type:'shareAgent',answerId:'agent-question',operation:'share-answer'});
+ await until(()=>second.posts.some(p=>p.type==='result'&&p.operation==='share-answer'));
+ assert.equal(second.posts.find(p=>p.type==='result'&&p.operation==='share-answer').ok,true);
+ const sharedAnswer=first.posts.filter(p=>p.type==='sdkCommand'&&p.command==='send').at(-1);assert.equal(sharedAnswer.input.agent.question,'What is an LLM?');assert.equal(sharedAnswer.input.clientId,'agent-question');
  second.receive({type:'removeMember',roomId:'room1',userId:'other',operation:'remove-member'});
  await until(()=>second.posts.some(p=>p.type==='result'&&p.operation==='remove-member'));
  let snapshot=second.posts.filter(p=>p.type==='state').at(-1);assert.equal(snapshot.rooms[0].members.length,1);assert.equal(snapshot.rooms[0].messages.length,2);

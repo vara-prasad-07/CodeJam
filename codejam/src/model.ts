@@ -2,7 +2,7 @@
 import type { Repository } from './repository';
 import type { VoiceAttachment } from './voice';
 export interface Attachment { path: string; line: number; endLine: number; code: string; branch: string; commit: string; repository?: string }
-export interface ChatMessage { id: string; author: string; userId: string; text: string; createdAt: string; attachment?: Attachment; voice?: VoiceAttachment; replyTo?: string; clientId?: string; discussionId?: string; mentions?: string[]; reviewedDraft?: boolean }
+export interface ChatMessage { id: string; author: string; userId: string; text: string; createdAt: string; attachment?: Attachment; voice?: VoiceAttachment; replyTo?: string; clientId?: string; discussionId?: string; mentions?: string[]; reviewedDraft?: boolean; agent?: {question:string; model:string} }
 export interface Room { id: string; ownerId?: string; channelId?: string; name: string; repository: string; createdAt: string; messages: ChatMessage[]; members: { id: string; name: string }[]; invite?: string; hasMore?: boolean; repositoryIdentity?: string; inviteExpiresAt?: number; pins?: Decision[]; discussions?: Discussion[]; reactions?: Reaction[]; presence?: Presence[]; call?: CallState | null }
 export interface Decision { id: string; title: string; text: string; source: ChatMessage; discussionId?: string; createdAt: string; pinnedBy: string }
 export interface Discussion { id: string; title: string; source: ChatMessage; status: 'open' | 'resolved'; createdAt: string; updatedAt: string; resolvedBy?: string }

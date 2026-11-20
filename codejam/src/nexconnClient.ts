@@ -3,7 +3,7 @@ import type { Attachment } from './model';
 
 type Host = { postMessage(data: unknown): void };
 interface Session { appKey: string; token: string; userId: string; region: 'SG' | 'NA' | 'SA' }
-interface SendInput { channelId: string; text: string; attachment?: Attachment; replyTo?: string; clientId: string; discussionId?: string; mentions?: string[]; reviewedDraft?: boolean }
+interface SendInput { channelId: string; text: string; attachment?: Attachment; replyTo?: string; clientId: string; discussionId?: string; mentions?: string[]; reviewedDraft?: boolean; agent?: {question:string; model:string} }
 interface SendVoiceInput { channelId: string; base64: string; replyTo?: string; discussionId?: string; clientId: string }
 export function startNexconnBridge(host: Host) {
  let initializedKey = '', connectedUser = '';
@@ -13,7 +13,7 @@ export function startNexconnBridge(host: Host) {
   if ((m.messageType !== MessageType.TEXT && m.messageType !== MessageType.HD_VOICE) || m.channelIdentifier.channelType !== ChannelType.GROUP) { return null; }
   let extra: Record<string, unknown> = {};
   try { const parsed = JSON.parse(m.content.extra || '{}'); if (parsed?.codejam === 1) { extra = parsed; } } catch { /* Ordinary Nexconn text. */ }
-  return { id: m.messageId, channelId: m.channelIdentifier.channelId, channelType: m.channelIdentifier.channelType, userId: m.senderUserId, text: m.content.text || '', createdAt: new Date(m.sentTime).toISOString(), attachment: extra.attachment, ...(m.messageType === MessageType.HD_VOICE?{voice:{url:m.content.remoteUrl,duration:m.content.duration,mimeType:'audio/wav'}}:{}), replyTo: extra.replyTo, clientId: extra.clientId, discussionId: extra.discussionId, reviewedDraft: extra.reviewedDraft === true, mentions: m.content.mentionedInfo?.userIdList || [] };
+  return { id: m.messageId, channelId: m.channelIdentifier.channelId, channelType: m.channelIdentifier.channelType, userId: m.senderUserId, text: m.content.text || '', createdAt: new Date(m.sentTime).toISOString(), attachment: extra.attachment, ...(m.messageType === MessageType.HD_VOICE?{voice:{url:m.content.remoteUrl,duration:m.content.duration,mimeType:'audio/wav'}}:{}), replyTo: extra.replyTo, clientId: extra.clientId, discussionId: extra.discussionId, reviewedDraft: extra.reviewedDraft === true, agent: extra.agent, mentions: m.content.mentionedInfo?.userIdList || [] };
  };
  const messages = (items: Message[]) => items.map(normalize).filter(Boolean);
  function initialize(session: Session) {
@@ -52,7 +52,7 @@ export function startNexconnBridge(host: Host) {
   if (sent.has(input.clientId)) { return sent.get(input.clientId); }
   if (NCEngine.getConnectionStatus() !== ConnectionStatus.CONNECTED) { throw new Error('Nexconn is disconnected. Reconnect before sending.'); }
   const promise = (async () => {
-   const result = await new GroupChannel(input.channelId).sendMessage(new SendTextMessageParams({ text: input.text || '[Shared code]', mentionedInfo: input.mentions?.length ? { type: MentionedType.USERS, userIdList: input.mentions } : undefined, extra: JSON.stringify({ codejam: 1, attachment: input.attachment, replyTo: input.replyTo, clientId: input.clientId, discussionId: input.discussionId, reviewedDraft: input.reviewedDraft }) }));
+   const result = await new GroupChannel(input.channelId).sendMessage(new SendTextMessageParams({ text: input.text || '[Shared code]', mentionedInfo: input.mentions?.length ? { type: MentionedType.USERS, userIdList: input.mentions } : undefined, extra: JSON.stringify({ codejam: 1, attachment: input.attachment, replyTo: input.replyTo, clientId: input.clientId, discussionId: input.discussionId, reviewedDraft: input.reviewedDraft, agent: input.agent }) }));
    if (!result.isOk || !result.data) { throw new Error(`Nexconn message send failed (code ${result.code}). Your draft is kept for retry.`); }
    return normalize(result.data);
   })();

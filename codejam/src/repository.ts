@@ -36,11 +36,11 @@ export async function detectRepository(folder: string): Promise<Repository> {
   commit, summary, author, committedAt, dirty: Boolean(status), stack, detected };
 }
 
-export async function readGitDiff(root: string): Promise<string> {
+export async function readGitDiff(root: string, strict = false): Promise<string> {
  const excludes = ['.', ':(exclude)**/.env*', ':(exclude).env*', ':(exclude)**/*.pem', ':(exclude)**/*.key', ':(exclude)**/*credentials*.json', ':(exclude)**/*service*account*.json'];
  const chunks: string[] = [];
  for (const args of [['diff', '--no-ext-diff', '--no-textconv', '--', ...excludes], ['diff', '--cached', '--no-ext-diff', '--no-textconv', '--', ...excludes]]) {
-  try { chunks.push(await git(root, args)); } catch { /* No diff / non-Git checkout. */ }
+  try { chunks.push(await git(root, args)); } catch { if (strict) { throw new Error('The local Git diff could not be read. Check the checkout and retry.'); } }
  }
  const diff = chunks.filter(Boolean).join('\n\n');
  return diff.length > 20000 ? diff.slice(0, 19800) + '\n[Diff truncated to the 20,000 character context limit]' : diff;

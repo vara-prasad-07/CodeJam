@@ -34,6 +34,15 @@ test('SDK send errors return failure and keep the same request available for ret
  assert.equal((await h.call('send',{channelId:'group1',text:'hello',clientId:'id'})).ok,true);
 });
 
+test('Agent provenance is preserved in shared-message transport and received history',async t=>{
+ const h=setup(t);await h.call('connect',{appKey:'public',token:'token',userId:'me',region:'SG'});
+ const agent={question:'What is a vision model?',model:'test-model'};
+ await h.call('send',{channelId:'group1',text:'An answer',clientId:'agent-answer',agent});
+ assert.deepEqual(JSON.parse(h.send.mock.calls[0].arguments[0].content.extra).agent,agent);
+ const packet=h.packet();packet.content.extra=JSON.stringify({codejam:1,agent});h.receive(packet);
+ assert.deepEqual(h.messages.find(m=>m.type==='sdkMessages').messages[0].agent,agent);
+});
+
 
 test('history membership rejection reports the actual cause instead of requesting cloud storage',async t=>{
  const h=setup(t);await h.call('connect',{appKey:'public',token:'token',userId:'me',region:'SG'});

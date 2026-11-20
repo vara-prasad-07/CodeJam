@@ -7,7 +7,7 @@ const setup=async(t)=>{
  const manage=(...args)=>{if(rejectManagement){throw Object.assign(new Error('Provider unavailable'),{status:502});}calls.push(args);};
  const nexconn={session:async user=>({appKey:'public-key',token:'nexconn-user-token',userId:user.id,region:'SG'}),createGroup:async room=>{if(rejectGroup){const e=new Error('Provider unavailable');e.status=502;throw e;}calls.push(['create',room.channelId]);},joinGroup:async(room,user)=>calls.push(['join',room.channelId,user.id]),leaveGroup:async(room,id)=>manage('leave',room.channelId,id),transferAndLeave:async(room,id)=>manage('transfer',room.channelId,id),dismissGroup:async room=>manage('dismiss',room.channelId)};
  const auth={password:async(_mode,{email,name})=>({uid:email.replace(/\W/g,''),email,name:name||email.split('@')[0]}),google:async token=>{if(token!=='valid-google-token'){const e=new Error('Invalid Firebase token');e.status=401;throw e;}return {uid:'google-user',email:'google@example.test',name:'Google User'};}};
- const ai={configured:true,draft:async context=>({text:'Private reviewed handoff for '+context.instruction,model:'test-model'})};
+ const ai={configured:true,answer:async context=>{calls.push(['agent',context]);return {status:'needs_context',text:'Enable Recent messages',missingSources:['messages']};},draft:async context=>({text:'Private reviewed handoff for '+context.instruction,model:'test-model'})};
  let server,base;const start=async()=>{server=await createRoomServer({store,nexconn,auth,ai,migrate:false,allowGuests:true});await new Promise(r=>server.listen(0,'127.0.0.1',r));base=`http://127.0.0.1:${server.address().port}`;};const stop=async()=>{server.closeAllConnections();await new Promise(r=>server.close(r));};
  await start();t.after(stop);
  const api=async(route,body,token,headers={})=>{const response=await fetch(base+route,{method:body===undefined?'GET':'POST',headers:{'Content-Type':'application/json',...(token?{Authorization:'Bearer '+token}:{}),...headers},body:body===undefined?undefined:JSON.stringify(body)});return {status:response.status,data:await response.json()};};
@@ -158,4 +158,15 @@ test('existing rooms without an ownership field retain creator permissions and b
  assert.equal((await h.api('/rooms',undefined,a.token)).data.rooms[0].ownerId,a.user.id);
  assert.equal((await h.api('/rooms/legacy/delete',{},a.token)).status,200);
  assert.equal((await h.api('/rooms',{name:'Existing room',repository:'repo'},a.token)).status,200);
+});
+
+test('Agent requests require membership and keep failed generations out of room storage',async t=>{
+ const h=await setup(t),a=await h.login('requester@example.test','Requester'),b=await h.login('outsider@example.test','Other');
+ const room=(await h.api('/rooms',{name:'Agent room',repository:'repo'},a.token)).data.room;
+ assert.equal((await h.api(`/rooms/${room.id}/agent`,{context:{instruction:'Question'}},b.token)).status,404);
+ const result=await h.api(`/rooms/${room.id}/agent`,{context:{instruction:'Question',permissions:{code:true}}},a.token);
+ assert.equal(result.status,200);assert.equal(result.data.status,'needs_context');
+ assert.equal(h.calls.filter(c=>c[0]==='agent').length,1);
+ const stored=await h.store.get('codejam_rooms',room.id);assert.equal(stored.messages,undefined);
+ assert.deepEqual((await h.api('/rooms',undefined,a.token)).data.rooms[0].messages,[]);
 });

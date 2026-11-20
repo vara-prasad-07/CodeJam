@@ -2,7 +2,7 @@
 
 Team conversations, shared code and decisions beside your editor.
 
-CodeJam brings repository-aware chat, code discussions, searchable decisions, reviewed AI drafts and audio huddles into VS Code. Open the sidebar for quick updates or use **CodeJam: Open Full View** for more space.
+CodeJam brings repository-aware chat, code discussions, searchable decisions, private AI answers and audio huddles into VS Code. Open the sidebar for quick updates or use **CodeJam: Open Full View** for more space.
 
 **Early preview:** the hosted backend uses Admin/IAM database access, and direct Firestore client access was verified as denied on November 19, 2026. This targeted check is not a full security audit. Read [Privacy](PRIVACY.md) and [Security](SECURITY.md) before connecting.
 
@@ -35,13 +35,15 @@ Open a reference in your checkout. When your revision differs, inspect the saved
 
 Mention names containing spaces with underscores: `@First_Last`.
 
-## Review AI drafts before sharing
+## Ask Agent from the composer
 
-Ask `@agent` or use **Ask AI** for a general question. Project context is optional: leave the boxes unchecked to send only your question. For help with your project, opt into attached/shared code, room/discussion messages or a local Git diff. Asking about a message selects that message; discussion context keeps the root and recent replies together.
+Tick **Selected code**, **Recent messages**, or **Git diff** beside the chat input, then type `@agent your question` and press **Enter**. The choices are remembered locally for that account, room and checkout. They apply only to Agent requests; normal messages work as before. All three start disabled for a new scope.
 
-Choose **Preview request**, generate a private Gemini answer, then review/edit before explicitly sending under your name. Changing your question or context requires a fresh preview. Empty optional sources are identified in the preview. Generation never posts automatically.
+Agent captures enabled sources when you submit: an attached/shared excerpt or current editor selection, up to 20 recent room/discussion messages, and staged/unstaged tracked Git changes. Asking about a message preserves that reference without automatically enabling access. Disabled sources are excluded both locally and on the backend. Secret-file exclusions and credential checks still apply.
 
-Context goes to Gemini when you generate. File-name and credential-pattern checks are limited: review everything you select before sending.
+Answers and errors appear inline and remain private to the requesting view. Click **Share with room** to publish a successful answer with its question, model and requester attribution. Errors cannot be shared. A missing permission asks you to enable the relevant source; an enabled but unavailable source asks you to select/load it. Fix the context and press Enter again or click **Retry question**. General questions need no project permissions. Gemini also checks whether the supplied excerpts are sufficient; context interpretation can be imperfect, so verify important answers.
+
+Changing rooms, accounts, checkouts or discussions discards stale results. Revoking a permission cancels a pending request. Private answers are kept only in memory while the view remains open; they are not stored in room history until shared. Generating never posts automatically.
 
 ## Talk through a problem
 

@@ -441,3 +441,23 @@ pre { margin: 0; padding: 13px; overflow: auto; color: var(--pale); font-size: 1
 @media (forced-colors: active) { .active:after, .nav-dot, .status i { background: Highlight; } .composer, .room-menu, .modal, .card { border-color: CanvasText; } }
 
 .room-management { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 20px; }
+
+.agent-controls { padding: 8px 10px; border-bottom: 1px solid var(--line); display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; }
+.agent-controls fieldset { display: flex; flex-wrap: wrap; gap: 6px 12px; border: 0; padding: 0; margin: 0; min-width: 0; flex: 1 1 220px; }
+.agent-controls legend { font-size: 10px; color: var(--muted); margin-bottom: 5px; }
+.agent-controls legend svg { width: 12px; height: 12px; }
+.agent-controls label { display: inline-flex; align-items: center; gap: 5px; font-size: 11px; cursor: pointer; }
+.agent-controls input[type=checkbox] { width: 13px; height: 13px; padding: 0; margin: 0; accent-color: var(--blue); }
+.agent-controls > p { flex-basis: 100%; font-size: 10px; color: var(--muted); }
+.agent-panel { flex: 0 1 auto; max-height: 42vh; overflow: auto; margin: 8px var(--gutter) 0; padding: 12px; border: 1px solid #729dff40; background: var(--panel); border-radius: 8px; }
+.agent-panel-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-bottom: 6px; }
+.agent-panel-head strong { font-size: 12px; }
+.agent-panel-head svg { width: 14px; height: 14px; color: var(--pale); }
+.agent-panel p { font-size: 12px; }
+.agent-panel .agent-question, .agent-question { color: var(--muted); font-size: 11px; margin-bottom: 8px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.agent-panel-actions { display: flex; gap: 8px; margin-top: 10px; }
+.agent-error { border-color: #d9a15d60; }
+.agent-share-error { color: #e7b783; margin-top: 8px; }
+.agent-attribution { color: var(--muted); font-size: 10px; }
+.agent-prose { white-space: pre-wrap; overflow-wrap: anywhere; }
+.agent-panel pre, .message-body pre { max-width: 100%; overflow: auto; background: var(--deep); padding: 10px; border-radius: 6px; font-size: 11px; }

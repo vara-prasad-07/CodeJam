@@ -117,6 +117,11 @@ export async function createRoomServer({store=createFirestoreStore(),nexconn=cre
    });
   }
   const match=url.pathname.match(/^\/rooms\/([\w-]+)(?:\/(.*))?$/);if(!match){fail(404,'Endpoint not found.');}const id=match[1],resource=match[2]||'';
+  if(req.method==='POST'&&['agent','draft'].includes(resource)){
+   await membership(id,user);
+   const answer=resource==='agent'?await ai.answer(body.context):await ai.draft(body.context);
+   await membership(id,user);return answer;
+  }
   return locked('room/'+id,async()=>{
   const room=await membership(id,user);const collection=kind=>'codejam_rooms/'+id+'/'+kind;
   async function deleteRoom(){
@@ -176,7 +181,6 @@ export async function createRoomServer({store=createFirestoreStore(),nexconn=cre
   if(req.method==='POST'&&resource==='reactions'){
    const allowed=['eyes','search','target','rocket','hands','check'];if(!text(body.messageId,200)||!allowed.includes(body.emoji)){fail(400,'Invalid reaction.');}const reaction=await mutate(collection('reactions'),hash(body.messageId).slice(0,32),current=>{const values=current?.values||{},members=values[body.emoji]||[];return {id:body.messageId,values:{...values,[body.emoji]:members.includes(user.id)?members.filter(v=>v!==user.id):[...members,user.id]}};});return {reaction};
   }
-  if(req.method==='POST'&&resource==='draft'){return ai.draft(body.context);}
   if(req.method==='POST'&&resource==='call-ticket'){await store.remove(collection('callControls'),user.id);const ticket=randomBytes(32).toString('hex');tickets.set(ticket,{user:{id:user.id,name:user.name,email:user.email||''},roomId:id,expiresAt:Date.now()+60000});return {ticket};}
   if(req.method==='GET'&&resource==='call'){
    const[call,control]=await Promise.all([store.get(collection('state'),'call'),store.get(collection('callControls'),user.id)]);return {call:call&&Date.now()-call.lastSeen<90000?call:null,control};

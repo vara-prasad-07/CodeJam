@@ -47,19 +47,6 @@ test('Polling preserves focused draft and escapes remote messages; invite join i
  h.click('[data-tab="connect"]');h.emit({...h.state,active:'r',rooms:[room],mode:'nexconn',connected:true,connection:'Connected to Nexconn'});h.click('[data-connect="join"]');h.input('#invite','cdj-code');h.submit('#join-form');assert.equal(h.requests.at(-1).type,'joinRoom');assert.equal(h.requests.at(-1).invite,'cdj-code');
 });
 
-test('AI requires preview, keeps its draft private, and sends only after review',t=>{
- const h=setup(t),r={id:'r',name:'Room',members:[{id:'me',name:'Me'}],messages:[{id:'m',userId:'me',author:'Me',text:'Investigate the export',createdAt:new Date().toISOString()}]};
- h.emit({...h.state,active:'r',rooms:[r],aiConfigured:true});h.click('[data-action="openChat"]');h.click('[data-action="agent"]');
- assert.equal(h.q('[data-action="generateDraft"]').disabled,true);
- h.input('#ai-instruction','Explain the export');
- h.click('[data-action="previewContext"]');const preview=h.requests.at(-1);assert.equal(preview.type,'prepareContext');assert.equal(preview.includeDiff,false);
- h.emit({type:'contextPreview',operation:preview.operation,context:{messages:[{text:'Investigate the export'}]},contextId:'ctx'});h.ack(preview);
- h.click('[data-action="generateDraft"]');const generate=h.requests.at(-1);assert.equal(generate.contextId,'ctx');
- h.emit({type:'draft',operation:generate.operation,text:'Private draft for review',model:'test-model'});h.ack(generate);
- assert.equal(h.requests.filter(x=>x.type==='send').length,0);
- h.input('#review-draft','Edited and reviewed draft');h.click('[data-action="sendReviewed"]');assert.equal(h.requests.at(-1).text,'Edited and reviewed draft');assert.equal(h.requests.at(-1).reviewedDraft,true);
-});
-
 test('Firebase password remains transient across refresh and is never persisted in webview state',t=>{
  const h=setup(t);h.emit({...h.state,authenticated:false});h.input('#auth-email','person@example.com');h.input('#auth-password','transient-password');
  h.emit({...h.state,authenticated:false,connection:'Please sign in'});assert.equal(h.q('#auth-password').value,'transient-password');
@@ -73,6 +60,78 @@ function collaboration(h){
  h.emit({...h.state,active:room.id,rooms:[room]});
  return room;
 }
+
+function grant(h,key,value=true){const el=h.q('#ai-'+key);el.checked=value;el.dispatchEvent(new h.w.Event('change',{bubbles:true}));}
+function answer(h,request,extra={}){h.emit({type:'agentResponse',operation:request.operation,roomId:request.roomId,status:'answer',text:'A private answer',answerId:request.operation,model:'test-model',shared:false,...extra});}
+
+test('@agent + Enter submits directly with default-deny permissions and no preview or public message',t=>{
+ const h=setup(t);collaboration(h);h.input('#compose','@agent What is a vision model?');
+ h.q('#compose').dispatchEvent(new h.w.KeyboardEvent('keydown',{key:'Enter',bubbles:true,cancelable:true}));
+ const request=h.requests.at(-1);assert.equal(request.type,'askAgent');assert.equal(request.instruction,'What is a vision model?');
+ assert.equal(request.permissions.code,false);assert.equal(request.permissions.messages,false);assert.equal(request.permissions.diff,false);
+ assert.equal(h.q('.modal'),null);assert.equal(h.q('#compose').disabled,false);assert.match(h.q('.agent-panel').textContent,/thinking/);
+ answer(h,request);assert.equal(h.q('#compose').value,'');assert.match(h.q('.agent-panel').textContent,/only you/);assert.ok(h.q('[data-action="shareAgent"]'));
+ assert.equal(h.requests.some(r=>r.type==='send'||r.type==='prepareContext'||r.type==='generateDraft'),false);
+ h.click('[data-action="shareAgent"]');const share=h.requests.at(-1);assert.equal(share.type,'shareAgent');assert.equal(share.answerId,request.operation);h.ack(share);
+ assert.match(h.q('.agent-panel').textContent,/shared/);
+});
+
+test('permission errors remain private, retain the question and retry with the updated checkboxes',t=>{
+ const h=setup(t);collaboration(h);grant(h,'code');h.input('#compose','@agent Explain this code based on our team discussion');h.submit('#message-form');const request=h.requests.at(-1);
+ answer(h,request,{status:'needs_context',text:'Please enable Recent messages',missingSources:['messages']});
+ assert.equal(h.q('#compose').value,'@agent Explain this code based on our team discussion');assert.match(h.q('.agent-panel').textContent,/enable Recent messages/);assert.equal(h.q('[data-action="shareAgent"]'),null);
+ grant(h,'messages');h.click('[data-action="retryAgent"]');const retry=h.requests.at(-1);
+ assert.equal(retry.type,'askAgent');assert.equal(retry.permissions.code,true);assert.equal(retry.permissions.messages,true);assert.notEqual(retry.operation,request.operation);
+ assert.equal(h.requests.some(r=>r.type==='send'),false);
+});
+
+test('context grants survive rerenders but are scoped to account, room and checkout',t=>{
+ const h=setup(t),r=collaboration(h);grant(h,'messages');h.emit({...h.state,active:r.id,rooms:[r],connection:'Updated'});assert.equal(h.q('#ai-messages').checked,true);
+ assert.ok(h.saved().aiGrants);
+ h.emit({...h.state,active:'other',rooms:[{...r,id:'other'}]});assert.equal(h.q('#ai-messages').checked,false);
+ h.emit({...h.state,active:r.id,rooms:[r]});assert.equal(h.q('#ai-messages').checked,true);
+ h.emit({...h.state,userId:'different-account',active:r.id,rooms:[r]});assert.equal(h.q('#ai-messages').checked,false);
+ h.emit({...h.state,repo:{...h.state.repo,root:'C:/another'},active:r.id,rooms:[r]});assert.equal(h.q('#ai-messages').checked,false);
+});
+
+test('revoking permissions cancels pending generation and ignores its late response',t=>{
+ const h=setup(t);collaboration(h);grant(h,'code');h.input('#compose','@agent Explain this code');h.submit('#message-form');const request=h.requests.at(-1);
+ grant(h,'code',false);assert.equal(h.requests.at(-1).type,'cancelAgent');answer(h,request,{text:'Late code answer'});
+ assert.equal(h.q('.agent-panel'),null);assert.equal(h.q('#compose').value,'@agent Explain this code');
+});
+
+test('room, account, checkout and discussion changes discard late private answers',t=>{
+ const h=setup(t),r=collaboration(h);h.input('#compose','@agent Explain recursion');h.submit('#message-form');const request=h.requests.at(-1);
+ h.emit({...h.state,active:'other',rooms:[{...r,id:'other'}]});answer(h,request,{text:'Old private answer'});
+ assert.equal(h.q('.agent-panel'),null);assert.doesNotMatch(h.q('#app').textContent,/Old private answer/);
+});
+
+test('duplicate Enter is ignored while thinking and normal chat can still send',t=>{
+ const h=setup(t);collaboration(h);h.input('#compose','@agent Explain recursion');h.submit('#message-form');const request=h.requests.at(-1);h.submit('#message-form');
+ assert.equal(h.requests.filter(r=>r.type==='askAgent').length,1);
+ h.input('#compose','A normal team message');h.submit('#message-form');const send=h.requests.at(-1);assert.equal(send.type,'send');h.ack(send);
+ h.input('#compose','New draft while waiting');answer(h,request);assert.equal(h.q('#compose').value,'New draft while waiting');
+});
+
+test('message-specific Agent requests preserve their source without enabling permissions or sending unrelated attachments',t=>{
+ const h=setup(t);collaboration(h);h.emit({type:'selection',attachment:{path:'unrelated.ts',code:'private code',line:1}});
+ h.click('[data-action="messageMenu"]');h.click('.modal [data-action="agent"]');
+ assert.equal(h.q('.modal'),null);assert.equal(h.q('#ai-messages').checked,false);grant(h,'messages');h.submit('#message-form');
+ const request=h.requests.at(-1);assert.equal(request.sourceId,'root');assert.equal(request.attachment,null);assert.equal(request.permissions.messages,true);
+});
+
+test('bare mentions, oversized questions and @agentic have distinct behavior',t=>{
+ const h=setup(t);collaboration(h);h.input('#compose','@agentic systems');h.submit('#message-form');assert.equal(h.requests.at(-1).type,'send');h.ack(h.requests.at(-1));
+ const before=h.requests.length;h.input('#compose','@agent');h.submit('#message-form');assert.equal(h.requests.length,before);assert.match(h.q('.agent-panel').textContent,/Enter a question/);
+ h.input('#compose','@agent '+ 'x'.repeat(2001));h.submit('#message-form');assert.equal(h.requests.length,before);assert.match(h.q('.agent-panel').textContent,/2,000/);
+});
+
+test('private answer markup is escaped, is not persisted and retry does not erase a different draft',t=>{
+ const h=setup(t);collaboration(h);h.input('#compose','@agent First question');h.submit('#message-form');const request=h.requests.at(-1);
+ answer(h,request,{status:'error',text:'Temporary failure'});h.input('#compose','An unrelated draft');h.click('[data-action="retryAgent"]');
+ const retry=h.requests.at(-1);answer(h,retry,{text:'<img src=x onerror=alert(1)> private answer'});
+ assert.equal(h.q('#compose').value,'An unrelated draft');assert.equal(h.q('.agent-panel img'),null);assert.equal(JSON.stringify(h.saved()).includes('private answer'),false);
+});
 
 test('Discussions have a stable destination, status filters, and independent drafts',t=>{
  const h=setup(t);collaboration(h);
@@ -124,7 +183,7 @@ test('Message overflow keeps discussion, decisions, and AI actions reachable',t=
  h.click('[data-action="messageMenu"]');h.click('.modal [data-action="discuss"]');
  assert.ok(h.q('.thread-heading'));
  h.click('[data-tab="chat"]');h.click('[data-action="messageMenu"]');h.click('.modal [data-action="agent"]');
- h.click('[data-action="previewContext"]');assert.equal(h.requests.at(-1).sourceId,'root');
+ h.submit('#message-form');assert.equal(h.requests.at(-1).sourceId,'root');
 });
 
 test('paused metadata updates explain the state without blocking live chat or losing the draft',t=>{
@@ -134,81 +193,6 @@ test('paused metadata updates explain the state without blocking live chat or lo
  assert.equal(h.q('#compose').value,'Keep working');assert.equal(h.q('#compose').disabled,false);
  h.emit({...h.state,rooms:[room],active:room.id,connected:true,updatesPaused:false});assert.equal(h.q('.sync-banner'),null);
 });
-
-test('general questions start without project context and preserve private review before sending',t=>{
- const h=setup(t);collaboration(h);h.input('#compose','@agent what is an LLM?');h.submit('#message-form');
- assert.equal(h.q('#ai-instruction').value,'what is an LLM?');
- for(const selector of ['#ai-code','#ai-messages','#ai-diff']){assert.equal(h.q(selector).checked,false);}
- assert.equal(h.q('#ai-code').disabled,true);
- h.click('[data-action="previewContext"]');const preview=h.requests.at(-1);
- assert.equal(preview.instruction,'what is an LLM?');assert.equal(preview.includeCode,false);assert.equal(preview.includeMessages,false);assert.equal(preview.includeDiff,false);
- assert.equal(h.q('#ai-instruction').disabled,true,'do not edit the question while preparing a snapshot');
- h.emit({type:'contextPreview',operation:preview.operation,context:{instruction:preview.instruction,messages:[],code:null,diff:'',repository:''},warnings:[],contextId:'question-only'});h.ack(preview);
- assert.match(h.q('#ai-context-preview').textContent,/QUESTION ONLY/);assert.match(h.q('#ai-context-preview').textContent,/No project code/);
- h.click('[data-action="generateDraft"]');const generate=h.requests.at(-1);
- h.emit({type:'draft',operation:generate.operation,text:'An LLM is a large language model.',model:'test-model'});h.ack(generate);
- assert.equal(h.requests.some(r=>r.type==='send'),false);
- h.input('#review-draft',' ');assert.equal(h.q('[data-action="sendReviewed"]').disabled,true);
- h.input('#review-draft','A reviewed explanation');assert.equal(h.q('[data-action="sendReviewed"]').disabled,false);
- h.click('[data-action="sendReviewed"]');assert.equal(h.requests.at(-1).text,'A reviewed explanation');assert.equal(h.requests.at(-1).reviewedDraft,true);
-});
-
-test('editing a question invalidates its preview and stale preview responses cannot re-enable generation',t=>{
- const h=setup(t);collaboration(h);h.click('[data-action="agent"]');
- assert.equal(h.q('[data-action="previewContext"]').disabled,true);
- h.input('#ai-instruction','First question');h.click('[data-action="previewContext"]');const preview=h.requests.at(-1);
- // Programmatic input also exercises a delayed response racing with a changed draft.
- h.input('#ai-instruction','Second question');
- h.emit({type:'contextPreview',operation:preview.operation,context:{instruction:'First question'},contextId:'stale'});h.ack(preview);
- assert.equal(h.q('[data-action="generateDraft"]').disabled,true);assert.doesNotMatch(h.q('#ai-context-preview').textContent,/First question/);
- h.click('[data-action="previewContext"]');const next=h.requests.at(-1);
- h.emit({type:'contextPreview',operation:next.operation,context:{instruction:'Second question',messages:[]},contextId:'fresh'});h.ack(next);
- assert.equal(h.q('[data-action="generateDraft"]').disabled,false);
- h.input('#ai-instruction','Third question');assert.equal(h.q('[data-action="generateDraft"]').disabled,true);
- assert.doesNotMatch(h.q('#ai-context-preview').textContent,/Preview ready/);
-});
-
-test('changing project-context choices clears consent for a previous snapshot',t=>{
- const h=setup(t);collaboration(h);h.click('[data-action="agent"]');h.input('#ai-instruction','Explain this');
- h.q('#ai-messages').checked=true;h.q('#ai-messages').dispatchEvent(new h.w.Event('change',{bubbles:true}));
- h.click('[data-action="previewContext"]');const preview=h.requests.at(-1);
- h.emit({type:'contextPreview',operation:preview.operation,context:{instruction:'Explain this',messages:[{text:'Original context'}]},contextId:'original'});h.ack(preview);
- h.q('#ai-messages').checked=false;h.q('#ai-messages').dispatchEvent(new h.w.Event('change',{bubbles:true}));
- assert.equal(h.q('[data-action="generateDraft"]').disabled,true);assert.doesNotMatch(h.q('#ai-context-preview').textContent,/Original context/);
- const before=h.requests.length;h.click('[data-action="generateDraft"]');assert.equal(h.requests.length,before);
-});
-
-test('an @agent prefix must be a full mention and empty questions stay blocked',t=>{
- const h=setup(t);collaboration(h);h.input('#compose','@agentic systems are useful');h.submit('#message-form');
- assert.equal(h.requests.at(-1).type,'send');h.ack(h.requests.at(-1));
- h.input('#compose','@agent');h.submit('#message-form');assert.equal(h.q('#ai-instruction').value,'');
- assert.equal(h.q('[data-action="previewContext"]').disabled,true);assert.equal(h.q('[data-action="generateDraft"]').disabled,true);
-});
-
-test('message-specific AI excludes unrelated composer attachments and keeps its source when changing context',t=>{
- const h=setup(t);collaboration(h);
- h.emit({type:'selection',attachment:{path:'private-draft.ts',line:1,code:'unrelated code'}});
- h.click('[data-action="messageMenu"]');h.click('.modal [data-action="agent"]');
- assert.equal(h.q('#ai-code').disabled,true);assert.equal(h.q('#ai-messages').checked,true);
- h.click('[data-action="previewContext"]');const preview=h.requests.at(-1);
- assert.equal(preview.sourceId,'root');assert.equal(preview.attachment,null);
- h.emit({type:'contextPreview',operation:preview.operation,context:{messages:[{text:'Review agent context'}]},contextId:'focused'});h.ack(preview);
- h.click('[data-action="generateDraft"]');const generation=h.requests.at(-1);
- h.emit({type:'draft',operation:generation.operation,text:'A focused answer',model:'test-model'});h.ack(generation);
- h.click('.modal [data-action="agent"]');h.click('[data-action="previewContext"]');
- assert.equal(h.requests.at(-1).sourceId,'root');assert.equal(h.requests.at(-1).attachment,null);
-});
-
-test('an AI response from a previous room cannot reopen its review in the new room',t=>{
- const h=setup(t);collaboration(h);h.click('[data-action="agent"]');h.input('#ai-instruction','Explain recursion');
- h.click('[data-action="previewContext"]');const preview=h.requests.at(-1);
- h.emit({type:'contextPreview',operation:preview.operation,context:{messages:[]},contextId:'old-room'});h.ack(preview);
- h.click('[data-action="generateDraft"]');const generation=h.requests.at(-1);
- h.emit({...h.state,active:'new-room',rooms:[{id:'new-room',name:'New room',members:[],messages:[]}]});
- h.emit({type:'draft',operation:generation.operation,text:'Old room private answer',model:'test-model'});h.ack(generation);
- assert.equal(h.q('.modal'),null);assert.doesNotMatch(h.q('#app').textContent,/Old room private answer/);
-});
-
 
 test('native voice UI preserves text drafts, locks destination and sends only after preview',t=>{
  const h=setup(t);const r=collaboration(h);h.emit({...h.state,voiceSupported:true,active:r.id,rooms:[r]});h.click('[data-action="openChat"]');

@@ -7,7 +7,7 @@ const element = (id:string) => document.getElementById(id)!;
 let grant: Grant, engine: NCCallEngine, callId = '', incoming = '', joined = false, muted = false, state = 'Ready', startedAt = '', lastControl = '', ticking = false;
 let roster: {id:string;name:string;muted?:boolean;status?:string}[] = [];
 const retryPolicy = new RefreshPolicy();
-let nextPollAt = 0, nextHeartbeatAt = 0;
+let nextPollAt = 0, nextHeartbeatAt = 0, accessRevoked = false;
 const escape = (value:string) => value.replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]!));
 function showError(text:string){element('error').textContent=text;element('error').hidden=false;}
 async function api(route:string,body?:unknown){
@@ -28,6 +28,7 @@ async function publish(event:string){if(!callId){return;}await api(`/rooms/${gra
 async function leave(){if(callId){const result=await engine.endCall({callId});if(result.code!==0){throw new Error('Nexconn could not end this call ('+result.code+'). Retry.');}await publish('leave').catch(()=>undefined);callId='';incoming='';joined=false;state='Call ended';element('level').textContent='Microphone idle';render();}}
 async function toggleMute(){const result=await engine.enableMicrophone(muted);if(result.code!==0){throw new Error('Microphone control failed ('+result.code+').');}muted=!muted;try{await publish('heartbeat');}finally{render();}}
 async function enter(){
+ if(accessRevoked){return;}
  element('error').hidden=true;const button=element('join') as HTMLButtonElement;button.disabled=true;
  try{
   if(!navigator.mediaDevices?.getUserMedia){throw new Error('Use this page on localhost or HTTPS in a browser with microphone support.');}
@@ -57,7 +58,14 @@ async function boot(){
   state='Ready for your team';await tick();render();
  }catch(error){state='Connection unavailable';showError((error as Error).message);(element('join') as HTMLButtonElement).disabled=true;render();}
 }
-async function tick(){if(!grant||ticking||!retryPolicy.canPoll||(!joined&&document.hidden)||Date.now()<nextPollAt){return;}nextPollAt=Date.now()+(joined?10000:30000);ticking=true;try{const result=await api(`/rooms/${grant.room.id}/call`);if(!callId&&result.call?.participants?.length){callId=result.call.callId;}roster=result.call?.participants||[];if(!joined&&!incoming){state=roster.length?'A huddle is in progress':'Ready for your team';}if(result.control&&result.control.id!==lastControl){lastControl=result.control.id;if(result.control.action==='leave'){await leave();}if(result.control.action==='mute'&&joined){await toggleMute();}}if(joined&&Date.now()>=nextHeartbeatAt){await publish('heartbeat');}render();}catch(error){showError((error as Error).message);}finally{ticking=false;}}
+async function tick(){if(accessRevoked||!grant||ticking||!retryPolicy.canPoll||(!joined&&document.hidden)||Date.now()<nextPollAt){return;}nextPollAt=Date.now()+(joined?10000:30000);ticking=true;try{const result=await api(`/rooms/${grant.room.id}/call`);if(!callId&&result.call?.participants?.length){callId=result.call.callId;}roster=result.call?.participants||[];if(!joined&&!incoming){state=roster.length?'A huddle is in progress':'Ready for your team';}if(result.control&&result.control.id!==lastControl){lastControl=result.control.id;if(result.control.action==='leave'){await leave();}if(result.control.action==='mute'&&joined){await toggleMute();}}if(joined&&Date.now()>=nextHeartbeatAt){await publish('heartbeat');}render();}catch(error){
+ if([401,403,404].includes((error as {status?:number}).status||0)){
+  accessRevoked=true; sessionStorage.removeItem('codejam.call');
+  await leave().catch(()=>undefined);
+  state='Room access ended'; (element('join') as HTMLButtonElement).disabled=true; render();
+ }
+ showError((error as Error).message);
+ }finally{ticking=false;}}
 element('join').addEventListener('click',()=>void enter());element('mute').addEventListener('click',()=>void toggleMute().catch(e=>showError(e.message)));element('leave').addEventListener('click',()=>void leave().catch(e=>showError(e.message)));
 element('retry').addEventListener('click',()=>location.reload());
 document.addEventListener('visibilitychange',()=>{if(!document.hidden){void tick();}});

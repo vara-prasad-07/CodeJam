@@ -61,22 +61,31 @@ export function createFirestoreStore({projectId=process.env.FIREBASE_PROJECT_ID|
     const e=new Error(`Firestore quota or capacity limit reached.${quota.limit?' Limit: '+quota.limit+'.':''} Check this project's Firestore API quotas before retrying.`);
     Object.assign(e,{status:429,code:'FIRESTORE_RESOURCE_EXHAUSTED',quota,retryAfterSeconds:600});throw e;
    }
-   const e=new Error(`Firestore ${result.error?.status||response.status}. Check the configured project and database access.`);const conflict=response.status===409||response.status===412||(result.error?.status==='FAILED_PRECONDITION'&&Object.hasOwn(query,'currentDocument.updateTime'));e.status=conflict?409:503;throw e;
+   const e=new Error(`Firestore ${result.error?.status||response.status}. Check the configured project and database access.`);const conflict=response.status===409||response.status===412||(result.error?.status==='FAILED_PRECONDITION'&&(Object.hasOwn(query,'currentDocument.updateTime')||Object.hasOwn(query,'currentDocument.exists')));e.status=conflict?409:503;throw e;
   }
   return result;
  }
  return {
   kind:'firestore',access:'server-iam',
   async get(collection,id){const result=await request('/'+clean(collection)+'/'+clean(id));return result?decode(result):null;},
-  async put(collection,id,value,version){const query=version?{'currentDocument.updateTime':version}:{};const result=await request('/'+clean(collection)+'/'+clean(id),'PATCH',{fields:encodeFields(value)},query);return decode(result);},
+  // null reserves a new document atomically; undefined keeps the usual upsert behavior.
+  async put(collection,id,value,version){const query=version===null?{'currentDocument.exists':'false'}:version?{'currentDocument.updateTime':version}:{};const result=await request('/'+clean(collection)+'/'+clean(id),'PATCH',{fields:encodeFields(value)},query);return decode(result);},
   async remove(collection,id){await request('/'+clean(collection)+'/'+clean(id),'DELETE');},
+  async clear(collection){
+   let pageToken;
+   do{
+    const page=await request('/'+clean(collection),'GET',undefined,{pageSize:'500',...(pageToken?{pageToken}:{})});
+    for(const doc of page?.documents||[]){await request('/'+clean(collection)+'/'+clean(doc.name.split('/').at(-1)),'DELETE');}
+    pageToken=page?.nextPageToken;
+   }while(pageToken);
+  },
   async list(collection,filter){
    const parts=clean(collection).split('/'),collectionId=parts.pop(),parent=parts.length?'/'+parts.join('/'):'';
-   const query={from:[{collectionId}],...(filter?{where:{fieldFilter:{field:{fieldPath:filter.field},op:filter.op||'EQUAL',value:encodeValue(filter.value)}}}:{}),limit:500};
+   const query={from:[{collectionId}],...(filter?{where:{fieldFilter:{field:{fieldPath:filter.field},op:filter.op||'EQUAL',value:encodeValue(filter.value)}}}:{}),...(filter?{limit:500}:{})};
    const result=await request(parent+':runQuery','POST',{structuredQuery:query});return (result||[]).filter(row=>row.document).map(row=>decode(row.document));
   },
  };
 }
 
 // Isolated unit-test adapter; never selected automatically by the application.
-export function createMemoryStore(){const rows=new Map();let serial=0;return {kind:'test-memory',async get(c,id){return structuredClone(rows.get(c+'/'+id)||null);},async put(c,id,value,version){const old=rows.get(c+'/'+id);if(version&&old?._version!==version){const e=new Error('Conflict');e.status=409;throw e;}const row={...structuredClone(value),_version:String(++serial)};rows.set(c+'/'+id,row);return structuredClone(row);},async remove(c,id){rows.delete(c+'/'+id);},async list(c,filter){return [...rows].filter(([key])=>key.startsWith(c+'/')&&!key.slice(c.length+1).includes('/')).map(([,value])=>structuredClone(value)).filter(value=>!filter||(filter.op==='ARRAY_CONTAINS'?value[filter.field]?.includes(filter.value):value[filter.field]===filter.value));}};}
+export function createMemoryStore(){const rows=new Map();let serial=0;return {kind:'test-memory',async get(c,id){return structuredClone(rows.get(c+'/'+id)||null);},async put(c,id,value,version){const old=rows.get(c+'/'+id);if((version===null&&old)||(version&&old?._version!==version)){const e=new Error('Conflict');e.status=409;throw e;}const row={...structuredClone(value),_version:String(++serial)};rows.set(c+'/'+id,row);return structuredClone(row);},async remove(c,id){rows.delete(c+'/'+id);},async clear(c){for(const key of rows.keys()){if(key.startsWith(c+'/')){rows.delete(key);}}},async list(c,filter){return [...rows].filter(([key])=>key.startsWith(c+'/')&&!key.slice(c.length+1).includes('/')).map(([,value])=>structuredClone(value)).filter(value=>!filter||(filter.op==='ARRAY_CONTAINS'?value[filter.field]?.includes(filter.value):value[filter.field]===filter.value));}};}

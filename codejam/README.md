@@ -19,7 +19,9 @@ CodeJam connects to `https://codejam-vdmp.onrender.com` by default. Hosted-servi
 
 Use **Chat**, **Discussions**, **Decisions**, and **Team** to move around your room. Click the room name to switch rooms or create/join another. The sliders button opens **Room setup**.
 
-Click the project name beside CodeJam for your Git branch, latest commit, and working-tree state. Select code in the editor and choose **Share Selection with Team** to send a reference with relative path, line range, branch, revision and selected excerpt. The message composer starts at one line, grows as you type, and sends with **Ctrl / ⌘ + Enter**.
+Room names must be unique, ignoring case and extra spaces. In **Team**, the room owner can remove members or delete the room, and any member can choose **Exit room**. When the owner exits, ownership passes to the next member; when the last member exits, the room is deleted. Removing a member changes the invitation code.
+
+Click the project name beside CodeJam for your Git branch, latest commit, and working-tree state. Select code in the editor and choose **Share Selection with Team** to send a reference with relative path, line range, branch, revision and selected excerpt. The message composer starts at one line, grows as you type, and sends with **Enter**. Use **Shift + Enter** for a new line.
 
 Open a reference in your checkout. When your revision differs, inspect the saved excerpt and working-copy diff. Opening a reference does not execute snippets or edit files.
 

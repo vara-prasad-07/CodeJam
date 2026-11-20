@@ -439,3 +439,5 @@ pre { margin: 0; padding: 13px; overflow: auto; color: var(--pale); font-size: 1
 @media (hover: none) { .message-actions { opacity: .65; } }
 @media (prefers-reduced-motion: reduce) { * { scroll-behavior: auto !important; transition: none !important; } }
 @media (forced-colors: active) { .active:after, .nav-dot, .status i { background: Highlight; } .composer, .room-menu, .modal, .card { border-color: CanvasText; } }
+
+.room-management { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 20px; }

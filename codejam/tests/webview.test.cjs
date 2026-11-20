@@ -238,3 +238,46 @@ test('received voice-only messages render a player and unavailable recorders sta
  assert.equal(h.q('audio[data-audio-key="clip"]').getAttribute('preload'),'none');assert.ok(h.q('[data-action="voiceStart"]').disabled);
  const before=h.requests.length;h.emit({type:'voiceState',state:{id:'stale',roomId:'other-room',phase:'recording'}});assert.equal(h.q('.voice-composer'),null);assert.equal(h.requests.length,before);
 });
+
+
+test('Enter sends chat and discussion replies while Shift+Enter and IME preserve drafts',t=>{
+ const h=setup(t);collaboration(h);
+ const key=options=>h.q('#compose').dispatchEvent(new h.w.KeyboardEvent('keydown',{key:'Enter',bubbles:true,cancelable:true,...options}));
+ h.input('#compose','Hello with Enter');const before=h.requests.length;
+ for(const options of [{shiftKey:true},{isComposing:true},{keyCode:229}]){assert.equal(key(options),true);assert.equal(h.requests.length,before);}
+ assert.equal(key({}),false);const sent=h.requests.at(-1);assert.equal(sent.type,'send');assert.equal(sent.text,'Hello with Enter');h.ack(sent);
+ h.click('[data-tab="discussions"]');h.click('[data-action="openThread"][data-id="open"]');h.input('#compose','Discussion reply');key({});
+ const reply=h.requests.at(-1);assert.equal(reply.type,'send');assert.equal(reply.discussionId,'open');h.ack(reply);
+ h.input('#compose','Keyboard shortcut');key({ctrlKey:true});assert.equal(h.requests.at(-1).text,'Keyboard shortcut');
+});
+
+test('owners can confirm removal and deletion for the selected room, and failures remain retryable',t=>{
+ const h=setup(t),r=collaboration(h);h.click('[data-tab="team"]');
+ assert.ok(h.q('[data-action="deleteRoomConfirm"]'));assert.ok(h.q('[data-action="leaveRoomConfirm"]'));
+ h.click('[data-action="removeMemberConfirm"]');assert.match(h.q('.modal').textContent,/Teammate/);
+ h.click('[data-action="removeMember"]');const remove=h.requests.at(-1);
+ assert.equal(remove.type,'removeMember');assert.equal(remove.userId,'other');assert.equal(remove.roomId,r.id);
+ h.ack(remove,false);assert.ok(h.q('.modal'));
+ h.click('[data-action="close"]');h.click('[data-action="deleteRoomConfirm"]');
+ const before=h.requests.length;h.click('[data-action="close"]');assert.equal(h.requests.length,before);
+ h.click('[data-action="deleteRoomConfirm"]');h.click('[data-action="deleteRoom"]');
+ const deletion=h.requests.at(-1);assert.equal(deletion.type,'deleteRoom');assert.equal(deletion.roomId,r.id);
+ h.emit({...h.state,rooms:[],active:undefined});h.ack(deletion);
+ assert.ok(h.q('#create-form'));assert.equal(h.q('.modal'),null);
+});
+
+test('members can exit but cannot see owner controls',t=>{
+ const h=setup(t),r=collaboration(h);r.ownerId='other';h.emit({...h.state,active:r.id,rooms:[r]});h.click('[data-tab="team"]');
+ assert.equal(h.q('[data-action="deleteRoomConfirm"]'),null);assert.equal(h.q('[data-action="removeMemberConfirm"]'),null);
+ h.click('[data-action="leaveRoomConfirm"]');h.click('[data-action="leaveRoom"]');
+ assert.equal(h.requests.at(-1).type,'leaveRoom');assert.equal(h.requests.at(-1).roomId,r.id);h.ack(h.requests.at(-1));
+});
+
+test('room-menu exit explains owner succession and last-member deletion',t=>{
+ const h=setup(t),r=collaboration(h);h.click('[data-action="rooms"]');
+ assert.ok(h.q('#room-menu [data-action="deleteRoomConfirm"]'));
+ h.click('#room-menu [data-action="leaveRoomConfirm"]');assert.match(h.q('.modal').textContent,/Teammate will become the room owner/);
+ h.click('[data-action="close"]');r.members=r.members.slice(0,1);h.emit({...h.state,active:r.id,rooms:[r]});
+ h.click('[data-action="rooms"]');h.click('#room-menu [data-action="leaveRoomConfirm"]');
+ assert.match(h.q('.modal').textContent,/last member.*room will be deleted/);
+});

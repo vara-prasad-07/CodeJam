@@ -72,3 +72,25 @@ test('backend sends a machine-readable quota error and Retry-After to clients',a
  assert.equal(response.status,429);assert.equal(response.headers.get('Retry-After'),'600');
  assert.deepEqual(await response.json(),{error:failure.message,code:failure.code,quota:failure.quota});
 });
+
+
+test('name reservations use create-only Firestore writes and reject existing memory records',async()=>{
+ const requests=[];const store=createFirestoreStore({projectId:'test-project',getAccessToken:async()=>'test-token',fetchImpl:async(url,options)=>{requests.push({url,options});return {ok:true,status:200,json:async()=>({fields:{},updateTime:'v1'})};}});
+ await store.put('codejam_room_names','room-name',{roomId:'one'},null);
+ assert.equal(new URL(requests[0].url).searchParams.get('currentDocument.exists'),'false');
+ const {createMemoryStore}=await import('./firestore.mjs');const memory=createMemoryStore();
+ await memory.put('codejam_room_names','room-name',{roomId:'one'},null);
+ await assert.rejects(memory.put('codejam_room_names','room-name',{roomId:'two'},null),e=>e.status===409);
+ assert.equal((await memory.get('codejam_room_names','room-name')).roomId,'one');
+});
+
+test('Firestore room cleanup deletes physical document IDs across pages',async()=>{
+ const requests=[];let reads=0;
+ const store=createFirestoreStore({projectId:'test-project',getAccessToken:async()=>'test-token',fetchImpl:async(url,options)=>{
+  requests.push([String(url),options.method]);let data={};
+  if(options.method==='GET'){reads++;data={documents:[{name:'projects/test-project/databases/(default)/documents/codejam_rooms/r/reactions/physical-'+reads}],...(reads===1?{nextPageToken:'page-two'}:{})};}
+  return {ok:true,status:200,json:async()=>data};
+ }});
+ await store.clear('codejam_rooms/r/reactions');
+ assert.equal(requests.length,4);assert.match(requests[1][0],/reactions\/physical-1$/);assert.match(requests[2][0],/pageToken=page-two/);assert.match(requests[3][0],/reactions\/physical-2$/);
+});

@@ -32,6 +32,8 @@ export function createNexconnService({ appKey = process.env.NEXCONN_APP_KEY, app
    await call('/v4/group-channel/join', { channelId: room.channelId, userIds: [room.members[0].id] });
   },
   joinGroup: (room, user) => call('/v4/group-channel/join', { channelId: room.channelId, userIds: [user.id] }),
+  leaveGroup: (room, userId) => call('/v4/group-channel/leave', { channelId: room.channelId, userIds: [userId] }),
+  transferAndLeave: (room, newOwner) => call('/v4/group-channel/transfer/owner', { channelId: room.channelId, newOwner, shouldLeave: 1 }),
   dismissGroup: room => call('/v4/group-channel/dismiss', { channelId: room.channelId }),
  };
 }

@@ -12,6 +12,9 @@ import { createLegacyMigration } from './legacy-migration.mjs';
 const hash = value => createHash('sha256').update(value).digest('hex');
 const fail=(status,message)=>{const error=new Error(message);error.status=status;throw error;};
 const text=(value,max)=>typeof value==='string'&&value.trim().length>0&&value.length<=max;
+const roomNameKey=name=>String(name).trim().replace(/\s+/g,' ').toLowerCase();
+const roomOwner=room=>room.ownerId||room.members[0]?.id;
+const duplicateRoom=()=>fail(409,'A room with this name already exists. Use a different name or ask its owner to delete the existing room.');
 const now=()=>new Date().toISOString();
 const safeName=name=>String(name||'Developer').trim().slice(0,60);
 const cleanSource=(source,room)=>{
@@ -23,6 +26,10 @@ const cleanSource=(source,room)=>{
 };
 export async function createRoomServer({store=createFirestoreStore(),nexconn=createNexconnService(),auth=createFirebaseAuth(),ai=createAI(),migrate=true,legacyFile=path.join(import.meta.dirname,'.data','nexconn-rooms.json'),allowGuests=process.env.CODEJAM_ALLOW_GUESTS==='true'}={}){
  const tickets=new Map(),loginRequests=new Map(),locks=new Map(),rates=new Map();
+ async function locked(key,work){
+  const previous=locks.get(key)||Promise.resolve(),task=previous.catch(()=>{}).then(work);
+  locks.set(key,task);try{return await task;}finally{if(locks.get(key)===task){locks.delete(key);}}
+ }
  async function mutate(collection,id,change){
   const key=collection+'/'+id,previous=locks.get(key)||Promise.resolve();
   const task=previous.catch(()=>{}).then(async()=>{for(let attempt=0;attempt<3;attempt++){const current=await store.get(collection,id);const updated=await change(current);try{return await store.put(collection,id,updated,current?._version);}catch(e){if(e.status!==409||attempt===2){throw e;}}}});
@@ -36,7 +43,7 @@ export async function createRoomServer({store=createFirestoreStore(),nexconn=cre
   const updated={...user,name:safeName(identity.name||user.name),email:identity.email||user.email,isGuest:false};
   await nexconn.session(updated);await store.put('codejam_accounts',identity.uid,updated);return issue(updated);
  }
- const publicRoom=room=>({id:room.id,channelId:room.channelId,name:room.name,repository:room.repository,repositoryIdentity:room.repositoryIdentity||'',createdAt:room.createdAt,invite:room.invite,inviteExpiresAt:room.inviteExpiresAt,members:room.members,messages:[]});
+ const publicRoom=room=>({id:room.id,channelId:room.channelId,name:room.name,ownerId:roomOwner(room),repository:room.repository,repositoryIdentity:room.repositoryIdentity||'',createdAt:room.createdAt,invite:room.invite,inviteExpiresAt:room.inviteExpiresAt,members:room.members,messages:[]});
  async function userFrom(req){const token=req.headers.authorization?.replace(/^Bearer /,'');if(!token||token.length>256){return null;}const session=await store.get('codejam_sessions',hash(token));return session&&session.expiresAt>Date.now()?session:null;}
  async function membership(id,user){const room=await store.get('codejam_rooms',id);if(!room?.members.some(m=>m.id===user.id)){fail(404,'Room not found or membership is required.');}if(user.scope==='call'&&user.roomId!==id){fail(403,'This call session belongs to another room.');}return room;}
  const browserConfig=()=>({apiKey:process.env.FIREBASE_API_KEY||process.env.apiKey,authDomain:process.env.FIREBASE_AUTH_DOMAIN||process.env.authDomain,projectId:process.env.FIREBASE_PROJECT_ID||process.env.projectId,appId:process.env.FIREBASE_APP_ID||process.env.appId});
@@ -87,18 +94,71 @@ export async function createRoomServer({store=createFirestoreStore(),nexconn=cre
   }
   if(req.method==='POST'&&url.pathname==='/rooms'){
    if(!text(body.name,64)||!text(body.repository,200)){fail(400,'A room name (1–64 characters) and repository are required.');}
-   const room={id:randomUUID(),channelId:'cj'+randomBytes(16).toString('hex'),name:body.name.trim(),repository:body.repository,repositoryIdentity:String(body.repositoryIdentity||'').slice(0,500),createdAt:now(),invite:'cdj-'+randomBytes(18).toString('hex'),inviteExpiresAt:Date.now()+7*86400000,members:[{id:user.id,name:user.name}],memberIds:[user.id]};await nexconn.createGroup(room);await store.put('codejam_rooms',room.id,room);return {room:publicRoom(room)};
+   const nameKey=roomNameKey(body.name),nameId=hash(nameKey),id=randomUUID();
+   // Atomic reservation also protects against duplicate requests on different backend instances.
+   try{await store.put('codejam_room_names',nameId,{roomId:id},null);}catch(error){if(error.status===409){duplicateRoom();}throw error;}
+   let persisted=false;
+   try{
+    // Older rooms predate the name index; keep their names reserved as well.
+    if((await store.list('codejam_rooms')).some(r=>roomNameKey(r.name)===nameKey)){duplicateRoom();}
+   const room={id,ownerId:user.id,nameKey,channelId:'cj'+randomBytes(16).toString('hex'),name:body.name.trim(),repository:body.repository,repositoryIdentity:String(body.repositoryIdentity||'').slice(0,500),createdAt:now(),invite:'cdj-'+randomBytes(18).toString('hex'),inviteExpiresAt:Date.now()+7*86400000,members:[{id:user.id,name:user.name}],memberIds:[user.id]};await nexconn.createGroup(room);await store.put('codejam_rooms',room.id,room);persisted=true;return {room:publicRoom(room)};
+   }finally{if(!persisted){await store.remove('codejam_room_names',nameId);}}
   }
   if(req.method==='POST'&&url.pathname==='/rooms/join'){
-   if(!text(body.invite,200)){fail(400,'Invitation code is required.');}const[room]=await store.list('codejam_rooms',{field:'invite',value:body.invite.trim()});if(!room||room.inviteExpiresAt<Date.now()){fail(404,'Invitation expired or not found. Ask a room member for a fresh invitation.');}if(room.members.length>=50&&!room.memberIds.includes(user.id)){fail(400,'Room member limit reached.');}await nexconn.joinGroup(room,user);
-   const joined=await mutate('codejam_rooms',room.id,current=>({...current,members:current.members.some(m=>m.id===user.id)?current.members:[...current.members,{id:user.id,name:user.name}],memberIds:[...new Set([...current.memberIds,user.id])]}));return {room:publicRoom(joined)};
+   if(!text(body.invite,200)){fail(400,'Invitation code is required.');}
+   const[found]=await store.list('codejam_rooms',{field:'invite',value:body.invite.trim()});
+   if(!found){fail(404,'Invitation expired or not found. Ask a room member for a fresh invitation.');}
+   return locked('room/'+found.id,async()=>{
+    const room=await store.get('codejam_rooms',found.id);
+    if(!room||room.invite!==body.invite.trim()||room.inviteExpiresAt<Date.now()){fail(404,'Invitation expired or not found. Ask a room member for a fresh invitation.');}
+    if(room.members.length>=50&&!room.memberIds.includes(user.id)){fail(400,'Room member limit reached.');}
+    await nexconn.joinGroup(room,user);
+    const joined=await mutate('codejam_rooms',room.id,current=>({...current,ownerId:roomOwner(current),members:current.members.some(m=>m.id===user.id)?current.members:[...current.members,{id:user.id,name:user.name}],memberIds:[...new Set([...current.memberIds,user.id])]}));return {room:publicRoom(joined)};
+   });
   }
-  const match=url.pathname.match(/^\/rooms\/([\w-]+)(?:\/(.*))?$/);if(!match){fail(404,'Endpoint not found.');}const id=match[1],resource=match[2]||'',room=await membership(id,user);const collection=kind=>'codejam_rooms/'+id+'/'+kind;
+  const match=url.pathname.match(/^\/rooms\/([\w-]+)(?:\/(.*))?$/);if(!match){fail(404,'Endpoint not found.');}const id=match[1],resource=match[2]||'';
+  return locked('room/'+id,async()=>{
+  const room=await membership(id,user);const collection=kind=>'codejam_rooms/'+id+'/'+kind;
+  async function deleteRoom(){
+   await nexconn.dismissGroup(room);
+   for(const kind of ['pins','discussions','presence','reactions','state','callControls']){
+    await store.clear(collection(kind));
+   }
+   await store.remove('codejam_rooms',id);
+   const nameId=hash(roomNameKey(room.name)),claim=await store.get('codejam_room_names',nameId);
+   if(claim?.roomId===id){await store.remove('codejam_room_names',nameId);}
+   for(const[key,ticket]of tickets){if(ticket.roomId===id){tickets.delete(key);}}
+   return {ok:true};
+  }
+  if(req.method==='POST'&&resource==='delete'){
+   if(roomOwner(room)!==user.id){fail(403,'Only the room owner can delete this room.');}
+   return deleteRoom();
+  }
+  if(req.method==='POST'&&(resource==='leave'||resource==='members/remove')){
+   const target=resource==='leave'?user.id:body.userId;
+   if(resource==='members/remove'){
+    if(roomOwner(room)!==user.id){fail(403,'Only the room owner can remove members.');}
+    if(target===user.id){fail(400,'Use Exit room to leave your room.');}
+   }
+   if(!room.memberIds.includes(target)){fail(404,'Room member not found.');}
+   const remaining=room.members.filter(m=>m.id!==target);
+   if(!remaining.length){return deleteRoom();}
+   const ownerId=roomOwner(room)===target?remaining[0].id:roomOwner(room);
+   if(roomOwner(room)===target){await nexconn.transferAndLeave(room,ownerId);}
+   else{await nexconn.leaveGroup(room,target);}
+   const updated=await mutate('codejam_rooms',id,current=>({...current,ownerId,members:current.members.filter(m=>m.id!==target),memberIds:current.memberIds.filter(member=>member!==target),invite:'cdj-'+randomBytes(18).toString('hex'),inviteExpiresAt:Date.now()+7*86400000}));
+   await store.remove(collection('presence'),target);
+   await store.put(collection('callControls'),target,{id:target,action:'leave',createdAt:now()});
+   const call=await store.get(collection('state'),'call');
+   if(call){await mutate(collection('state'),'call',current=>({...current,participants:(current?.participants||[]).filter(p=>p.id!==target)}));}
+   for(const[key,ticket]of tickets){if(ticket.roomId===id&&ticket.user.id===target){tickets.delete(key);}}
+   return {room:publicRoom(updated)};
+  }
   if(req.method==='POST'&&resource==='chat-membership'){await nexconn.joinGroup(room,user);return {ok:true};}
   if(req.method==='POST'&&resource==='invite'){const updated=await mutate('codejam_rooms',id,r=>({...r,invite:'cdj-'+randomBytes(18).toString('hex'),inviteExpiresAt:Date.now()+7*86400000}));return {room:publicRoom(updated)};}
   if(req.method==='GET'&&resource==='details'){
    const[pins,discussions,presence,reactions,call]=await Promise.all([store.list(collection('pins')),store.list(collection('discussions')),store.list(collection('presence')),store.list(collection('reactions')),store.get(collection('state'),'call')]);
-   return {pins,discussions,presence:presence.filter(p=>Date.now()-p.lastSeen<90000),reactions,call:call&&Date.now()-call.lastSeen<90000?call:null};
+   return {ownerId:roomOwner(room),members:room.members,invite:room.invite,inviteExpiresAt:room.inviteExpiresAt,pins,discussions,presence:presence.filter(p=>Date.now()-p.lastSeen<90000),reactions,call:call&&Date.now()-call.lastSeen<90000?call:null};
   }
   if(req.method==='POST'&&resource==='presence'){
    const focus=String(body.focus||'Working in the project').slice(0,180);await store.put(collection('presence'),user.id,{id:user.id,name:user.name,focus,lastSeen:Date.now()});return {ok:true};
@@ -134,6 +194,7 @@ export async function createRoomServer({store=createFirestoreStore(),nexconn=cre
    });return {call};
   }
   fail(404,'Endpoint not found.');
+  });
  }
  const server=http.createServer(async(req,res)=>{try{const data=await route(req,res);if(!res.writableEnded){res.writeHead(200,{'Content-Type':'application/json'});res.end(JSON.stringify(data));}}catch(error){if(!res.writableEnded){if(error.retryAfterSeconds){res.setHeader('Retry-After',String(error.retryAfterSeconds));}res.writeHead(error.status||500,{'Content-Type':'application/json','Cache-Control':'no-store'});res.end(JSON.stringify({error:error.status?error.message:'The server could not complete the request. Retry; check backend configuration if it persists.',...(error.code==='FIRESTORE_RESOURCE_EXHAUSTED'?{code:error.code,quota:error.quota}:{})}));}}});server.requestTimeout=60000;
  const cleanup=setInterval(()=>{for(const map of[tickets,loginRequests]){for(const[key,value]of map){if(value.expiresAt<Date.now()){map.delete(key);}}}for(const[key,value]of rates){if(value.until<Date.now()){rates.delete(key);}}},30000);cleanup.unref();server.on('close',()=>clearInterval(cleanup));return server;

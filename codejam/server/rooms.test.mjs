@@ -3,15 +3,16 @@ import assert from 'node:assert/strict';
 import { createRoomServer, listenAddress } from './index.mjs';
 import { createMemoryStore } from './firestore.mjs';
 const setup=async(t)=>{
- const store=createMemoryStore(),calls=[];let rejectGroup=false;
- const nexconn={session:async user=>({appKey:'public-key',token:'nexconn-user-token',userId:user.id,region:'SG'}),createGroup:async room=>{if(rejectGroup){const e=new Error('Provider unavailable');e.status=502;throw e;}calls.push(['create',room.channelId]);},joinGroup:async(room,user)=>calls.push(['join',room.channelId,user.id])};
+ const store=createMemoryStore(),calls=[];let rejectGroup=false,rejectManagement=false;
+ const manage=(...args)=>{if(rejectManagement){throw Object.assign(new Error('Provider unavailable'),{status:502});}calls.push(args);};
+ const nexconn={session:async user=>({appKey:'public-key',token:'nexconn-user-token',userId:user.id,region:'SG'}),createGroup:async room=>{if(rejectGroup){const e=new Error('Provider unavailable');e.status=502;throw e;}calls.push(['create',room.channelId]);},joinGroup:async(room,user)=>calls.push(['join',room.channelId,user.id]),leaveGroup:async(room,id)=>manage('leave',room.channelId,id),transferAndLeave:async(room,id)=>manage('transfer',room.channelId,id),dismissGroup:async room=>manage('dismiss',room.channelId)};
  const auth={password:async(_mode,{email,name})=>({uid:email.replace(/\W/g,''),email,name:name||email.split('@')[0]}),google:async token=>{if(token!=='valid-google-token'){const e=new Error('Invalid Firebase token');e.status=401;throw e;}return {uid:'google-user',email:'google@example.test',name:'Google User'};}};
  const ai={configured:true,draft:async context=>({text:'Private reviewed handoff for '+context.instruction,model:'test-model'})};
  let server,base;const start=async()=>{server=await createRoomServer({store,nexconn,auth,ai,migrate:false,allowGuests:true});await new Promise(r=>server.listen(0,'127.0.0.1',r));base=`http://127.0.0.1:${server.address().port}`;};const stop=async()=>{server.closeAllConnections();await new Promise(r=>server.close(r));};
  await start();t.after(stop);
  const api=async(route,body,token,headers={})=>{const response=await fetch(base+route,{method:body===undefined?'GET':'POST',headers:{'Content-Type':'application/json',...(token?{Authorization:'Bearer '+token}:{}),...headers},body:body===undefined?undefined:JSON.stringify(body)});return {status:response.status,data:await response.json()};};
  const login=async(email,name)=>{const result=await api('/auth/password',{mode:'signup',email,password:'example-password',name});assert.equal(result.status,200);return result.data;};
- return {api,login,store,calls,reject:()=>rejectGroup=true,restart:async()=>{await stop();await start();}};
+ return {api,login,store,calls,reject:()=>rejectGroup=true,rejectManagement:()=>rejectManagement=true,restart:async()=>{await stop();await start();}};
 };
 test('Firebase accounts create/join real-provider rooms; persisted membership enforces room access',async t=>{
  const h=await setup(t),a=await h.login('vara@example.test','Vara'),b=await h.login('aisha@example.test','Aisha'),outsider=await h.login('other@example.test','Other');
@@ -78,4 +79,83 @@ test('voice discussion snapshots retain audio metadata and reject unsafe media U
  for(const voice of [{...source.voice,url:'file:///private.wav'},{...source.voice,url:'https://user:secret@media.example/audio'},{...source.voice,duration:61}]){
   assert.equal((await h.api(`/rooms/${room.id}/discussions`,{title:'Invalid',source:{...source,id:'invalid',voice}},a.token)).status,400);
  }
+});
+
+
+test('room names are unique across users, case, whitespace, concurrent creation and restart',async t=>{
+ const h=await setup(t),a=await h.login('owner@example.test','Owner'),b=await h.login('member@example.test','Member');
+ const results=await Promise.all([h.api('/rooms',{name:' Build Room ',repository:'repo'},a.token),h.api('/rooms',{name:'build   room',repository:'repo'},b.token)]);
+ assert.deepEqual(results.map(r=>r.status).sort(),[200,409]);
+ assert.match(results.find(r=>r.status===409).data.error,/different name.*delete the existing room/);
+ assert.equal(h.calls.filter(c=>c[0]==='create').length,1);
+ await h.restart();assert.equal((await h.api('/rooms',{name:'BUILD ROOM',repository:'other-repo'},a.token)).status,409);
+});
+
+test('only owners can remove members or delete rooms; deletion cleans records and releases the name',async t=>{
+ const h=await setup(t),a=await h.login('owner@example.test','Owner'),b=await h.login('member@example.test','Member');
+ const room=(await h.api('/rooms',{name:'Managed room',repository:'repo',ownerId:b.user.id},a.token)).data.room;
+ assert.equal(room.ownerId,a.user.id);
+ await h.api('/rooms/join',{invite:room.invite},b.token);
+ for(const [resource,body] of [['delete',{}],['members/remove',{userId:a.user.id}]]){
+  assert.equal((await h.api(`/rooms/${room.id}/${resource}`,body,b.token)).status,403);
+ }
+ assert.equal((await h.api(`/rooms/${room.id}/members/remove`,{userId:a.user.id},a.token)).status,400);
+ const removed=await h.api(`/rooms/${room.id}/members/remove`,{userId:b.user.id},a.token);
+ assert.equal(removed.status,200);assert.deepEqual(removed.data.room.members.map(m=>m.id),[a.user.id]);
+ assert.deepEqual(h.calls.at(-1),['leave',room.channelId,b.user.id]);
+ assert.notEqual(removed.data.room.invite,room.invite);
+ assert.equal((await h.api(`/rooms/${room.id}/chat-membership`,{},b.token)).status,404);
+ assert.equal((await h.api(`/rooms/${room.id}/details`,undefined,b.token)).status,404);
+ assert.equal((await h.api('/rooms/join',{invite:room.invite},b.token)).status,404);
+ assert.equal((await h.api('/rooms',undefined,b.token)).data.rooms.length,0);
+ for(const kind of ['pins','discussions','presence','reactions','state','callControls']){
+  await h.store.put(`codejam_rooms/${room.id}/${kind}`,'physical-id',{id:'different-logical-id'});
+ }
+ assert.equal((await h.api(`/rooms/${room.id}/delete`,{},a.token)).status,200);
+ assert.deepEqual(h.calls.at(-1),['dismiss',room.channelId]);
+ assert.equal(await h.store.get('codejam_rooms',room.id),null);
+ for(const kind of ['pins','discussions','presence','reactions','state','callControls']){assert.equal((await h.store.list(`codejam_rooms/${room.id}/${kind}`)).length,0);}
+ assert.equal((await h.api('/rooms',{name:'managed ROOM',repository:'repo'},a.token)).status,200);
+});
+
+test('exit removes membership, transfers an exiting owner and deletes the last-member room',async t=>{
+ const h=await setup(t),a=await h.login('owner@example.test','Owner'),b=await h.login('member@example.test','Member');
+ const room=(await h.api('/rooms',{name:'Exit room',repository:'repo'},a.token)).data.room;
+ await h.api('/rooms/join',{invite:room.invite},b.token);
+ const ticket=(await h.api(`/rooms/${room.id}/call-ticket`,{},a.token)).data.ticket;
+ const grant=(await h.api('/calls/claim',{ticket})).data;
+ await h.api(`/rooms/${room.id}/call`,{event:'join',callId:'call',status:'connected'},grant.sessionToken);
+ assert.equal((await h.api(`/rooms/${room.id}/leave`,{userId:b.user.id},a.token)).status,200);
+ assert.deepEqual(h.calls.at(-1),['transfer',room.channelId,b.user.id]);
+ assert.equal((await h.api('/rooms',undefined,a.token)).data.rooms.length,0);
+ const updated=(await h.api('/rooms',undefined,b.token)).data.rooms[0];assert.equal(updated.ownerId,b.user.id);
+ assert.equal((await h.api(`/rooms/${room.id}/call`,undefined,grant.sessionToken)).status,404);
+ assert.equal((await h.api(`/rooms/${room.id}/details`,undefined,b.token)).data.call.participants.length,0);
+ await h.restart();
+ assert.equal((await h.api(`/rooms/${room.id}/leave`,{},b.token)).status,200);
+ assert.deepEqual(h.calls.at(-1),['dismiss',room.channelId]);
+ assert.equal((await h.api('/rooms',{name:'Exit room',repository:'repo'},b.token)).status,200);
+});
+
+test('ordinary members can exit and provider failures keep membership and owner permissions intact',async t=>{
+ const h=await setup(t),a=await h.login('owner@example.test','Owner'),b=await h.login('member@example.test','Member');
+ const room=(await h.api('/rooms',{name:'Leave room',repository:'repo'},a.token)).data.room;
+ await h.api('/rooms/join',{invite:room.invite},b.token);
+ assert.equal((await h.api(`/rooms/${room.id}/leave`,{},b.token)).status,200);
+ assert.deepEqual(h.calls.at(-1),['leave',room.channelId,b.user.id]);
+ const invite=(await h.api('/rooms',undefined,a.token)).data.rooms[0].invite;
+ await h.api('/rooms/join',{invite},b.token);h.rejectManagement();
+ for(const [action,body,token]of [['delete',{},a.token],['members/remove',{userId:b.user.id},a.token],['leave',{},b.token],['leave',{},a.token]]){
+  assert.equal((await h.api(`/rooms/${room.id}/${action}`,body,token)).status,502);
+ }
+ const persisted=await h.store.get('codejam_rooms',room.id);assert.equal(persisted.ownerId,a.user.id);assert.equal(persisted.members.length,2);
+});
+
+test('existing rooms without an ownership field retain creator permissions and block duplicate names',async t=>{
+ const h=await setup(t),a=await h.login('legacy@example.test','Legacy');
+ await h.store.put('codejam_rooms','legacy',{id:'legacy',channelId:'legacy-channel',name:'Existing room',repository:'repo',createdAt:new Date().toISOString(),members:[a.user],memberIds:[a.user.id]});
+ assert.equal((await h.api('/rooms',{name:' EXISTING ROOM ',repository:'repo'},a.token)).status,409);
+ assert.equal((await h.api('/rooms',undefined,a.token)).data.rooms[0].ownerId,a.user.id);
+ assert.equal((await h.api('/rooms/legacy/delete',{},a.token)).status,200);
+ assert.equal((await h.api('/rooms',{name:'Existing room',repository:'repo'},a.token)).status,200);
 });

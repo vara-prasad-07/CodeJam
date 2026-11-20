@@ -3,7 +3,7 @@ import type { Repository } from './repository';
 import type { VoiceAttachment } from './voice';
 export interface Attachment { path: string; line: number; endLine: number; code: string; branch: string; commit: string; repository?: string }
 export interface ChatMessage { id: string; author: string; userId: string; text: string; createdAt: string; attachment?: Attachment; voice?: VoiceAttachment; replyTo?: string; clientId?: string; discussionId?: string; mentions?: string[]; reviewedDraft?: boolean }
-export interface Room { id: string; channelId?: string; name: string; repository: string; createdAt: string; messages: ChatMessage[]; members: { id: string; name: string }[]; invite?: string; hasMore?: boolean; repositoryIdentity?: string; inviteExpiresAt?: number; pins?: Decision[]; discussions?: Discussion[]; reactions?: Reaction[]; presence?: Presence[]; call?: CallState | null }
+export interface Room { id: string; ownerId?: string; channelId?: string; name: string; repository: string; createdAt: string; messages: ChatMessage[]; members: { id: string; name: string }[]; invite?: string; hasMore?: boolean; repositoryIdentity?: string; inviteExpiresAt?: number; pins?: Decision[]; discussions?: Discussion[]; reactions?: Reaction[]; presence?: Presence[]; call?: CallState | null }
 export interface Decision { id: string; title: string; text: string; source: ChatMessage; discussionId?: string; createdAt: string; pinnedBy: string }
 export interface Discussion { id: string; title: string; source: ChatMessage; status: 'open' | 'resolved'; createdAt: string; updatedAt: string; resolvedBy?: string }
 export interface Reaction { id: string; values: Record<string, string[]> }
@@ -12,7 +12,7 @@ export interface CallState { callId: string; startedAt: string; hostId: string; 
 export interface LocalState { rooms: Room[]; active?: string }
 export function createRoom(name: unknown, repo: Repository, user: { id: string; name: string }): Room {
  if (typeof name !== 'string' || !name.trim() || name.trim().length > 64) { throw new Error('Enter a room name of 1–64 characters.'); }
- return { id: randomUUID(), name: name.trim(), repository: repo.name, createdAt: new Date().toISOString(), messages: [], members: [user] };
+ return { id: randomUUID(), ownerId: user.id, name: name.trim(), repository: repo.name, createdAt: new Date().toISOString(), messages: [], members: [user] };
 }
 export function createMessage(input: Record<string, unknown>, user: { id: string; name: string }, room: Room): ChatMessage {
  const text = typeof input.text === 'string' ? input.text.trim() : '';

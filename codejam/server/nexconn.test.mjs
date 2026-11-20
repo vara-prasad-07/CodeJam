@@ -19,3 +19,12 @@ test('missing keys or provider failures never enable a local messaging fallback 
  const service=createNexconnService({appKey:'public',appSecret:'private',fetchImpl:async()=>({ok:false,status:401,json:async()=>({code:1004,message:'private echoed data',accessToken:'never-log'})})});
  await assert.rejects(service.session({id:'user',name:'User'}),error=>error.status===502&&!error.message.includes('private')&&!error.message.includes('never-log'));
 });
+
+
+test('room management removes provider access and transfers an exiting owner',async()=>{
+ const calls=[];
+ const service=createNexconnService({appKey:'public',appSecret:'private',fetchImpl:async(url,options)=>{calls.push([new URL(url).pathname,JSON.parse(options.body)]);return {ok:true,status:200,json:async()=>({code:0})};}});
+ const room={channelId:'group1'};
+ await service.leaveGroup(room,'member');await service.transferAndLeave(room,'successor');await service.dismissGroup(room);
+ assert.deepEqual(calls,[['/v4/group-channel/leave',{channelId:'group1',userIds:['member']}],['/v4/group-channel/transfer/owner',{channelId:'group1',newOwner:'successor',shouldLeave:1}],['/v4/group-channel/dismiss',{channelId:'group1'}]]);
+});

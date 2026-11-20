@@ -38,7 +38,9 @@ test('extension shares one SDK connection across views and sends exclusively thr
   const route=new URL(url).pathname;calls.push(route);let data;
   if(route==='/sessions'){data={token:'application-session'};}
   else if(route==='/chat/session'){data={appKey:'public-key',token:'user-nexconn-token',userId:'me',region:'SG'};}
-  else if(route==='/rooms'&&options.method==='POST'){room={id:'room1',channelId:'group1',name:'Room',repository:'repo',messages:[],members:[{id:'me',name:'Vara'}]};data={room};}
+  else if(route==='/rooms'&&options.method==='POST'){room={id:'room1',channelId:'group1',name:'Room',ownerId:'me',repository:'repo',messages:[],members:[{id:'me',name:'Vara'},{id:'other',name:'Teammate'}]};data={room};}
+  else if(route.endsWith('/members/remove')){const body=JSON.parse(options.body);assert.equal(body.userId,'other');room={...room,members:room.members.filter(m=>m.id!==body.userId)};data={room:{...room,messages:[]}};}
+  else if(route.endsWith('/leave')||route.endsWith('/delete')){room=null;data={ok:true};}
   else if(route.endsWith('/details')){data={pins:[],discussions:[],reactions:[],presence:[],call:null};}
   else if(route.endsWith('/chat-membership')){data={ok:true};}
   else if(route.endsWith('/presence')){data={ok:true};}
@@ -76,5 +78,15 @@ test('extension shares one SDK connection across views and sends exclusively thr
  const voiceSend=first.posts.find(p=>p.type==='sdkCommand'&&p.command==='sendVoice');assert.equal(voiceSend.input.channelId,'group1');assert.equal(voiceSend.input.clientId,'stable-voice');assert.equal(voiceSend.input.replyTo,'sdk-ack');
  assert.ok(second.posts.filter(p=>p.type==='state').at(-1).rooms[0].messages.some(m=>m.id==='sdk-voice'&&m.voice.duration===2));assert.equal(fakeRecorder.state,undefined);
  assert.ok(!calls.some(route=>route.endsWith('/messages')||route.includes('upload')),'voice transport must stay with Nexconn');
+ second.receive({type:'removeMember',roomId:'room1',userId:'other',operation:'remove-member'});
+ await until(()=>second.posts.some(p=>p.type==='result'&&p.operation==='remove-member'));
+ let snapshot=second.posts.filter(p=>p.type==='state').at(-1);assert.equal(snapshot.rooms[0].members.length,1);assert.equal(snapshot.rooms[0].messages.length,2);
+ second.receive({type:'leaveRoom',roomId:'room1',operation:'leave-room'});
+ await until(()=>second.posts.some(p=>p.type==='result'&&p.operation==='leave-room'));
+ snapshot=second.posts.filter(p=>p.type==='state').at(-1);assert.equal(snapshot.rooms.length,0);assert.equal(snapshot.active,undefined);
+ second.receive({type:'createRoom',name:'Room',operation:'recreate'});await until(()=>second.posts.some(p=>p.type==='result'&&p.operation==='recreate'));
+ second.receive({type:'deleteRoom',roomId:'room1',operation:'delete-room'});await until(()=>second.posts.some(p=>p.type==='result'&&p.operation==='delete-room'));
+ assert.equal(second.posts.filter(p=>p.type==='state').at(-1).rooms.length,0);
+ assert.ok(calls.includes('/rooms/room1/members/remove'));assert.ok(calls.includes('/rooms/room1/leave'));assert.ok(calls.includes('/rooms/room1/delete'));
  first.close();await until(()=>second.posts.some(p=>p.type==='sdkCommand'&&p.command==='connect'));
 });

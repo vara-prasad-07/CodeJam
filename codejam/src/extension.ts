@@ -142,7 +142,14 @@ export function activate(context: vscode.ExtensionContext) {
     if (shared.active && !loaded.has(shared.active)) { await loadHistory(); }
     connection = sdkConnected ? 'Connected to Nexconn' : 'Waiting for the Nexconn SDK client';
     refreshPolicy.succeeded();
-   } catch (error) { connection = (error as Error).message; }
+   } catch (error) {
+    connection = (error as Error).message;
+    if ((error as {status?:number}).status === 404 && shared.active) {
+     loaded.delete(shared.active); shared.rooms = shared.rooms.filter(r => r.id !== shared.active);
+     shared.active = shared.rooms[0]?.id; contexts.clear(); refreshPolicy.reset();
+     await context.workspaceState.update(`codejam.active.nexconn.${apiUrl()}`, shared.active);
+    }
+   }
    await broadcast();
   } finally { refreshing = false; }
  }
@@ -197,6 +204,23 @@ export function activate(context: vscode.ExtensionContext) {
     shared.active = result.room.id;
     await context.workspaceState.update(`codejam.active.nexconn.${apiUrl()}`, shared.active);
     await refresh();
+   }
+   else if (data.type === 'deleteRoom' || data.type === 'leaveRoom' || data.type === 'removeMember') {
+    const room = shared.rooms.find(r => r.id === data.roomId);
+    if (!room) { throw new Error('Room not found.'); }
+    if (recorder.state?.phase === 'uploading') { throw new Error('Wait for your voice message to finish sending.'); }
+    const action = data.type === 'deleteRoom' ? 'delete' : data.type === 'leaveRoom' ? 'leave' : 'members/remove';
+    const result = await request(`/rooms/${room.id}/${action}`, data.type === 'removeMember' ? {userId:data.userId} : {});
+    if (data.type === 'removeMember') {
+     Object.assign(room, result.room, {messages:room.messages});
+     await refreshDetails();
+    } else {
+     await recorder.cancel();
+     shared.rooms = shared.rooms.filter(r => r.id !== room.id); loaded.delete(room.id); contexts.clear();
+     if (shared.active === room.id) { shared.active = shared.rooms[0]?.id; }
+     await context.workspaceState.update(`codejam.active.nexconn.${apiUrl()}`, shared.active);
+    }
+    await broadcast();
    }
    else if (data.type === 'switchRoom') {
     if (recorder.state?.phase === 'uploading') { throw new Error('Wait for your voice message to finish sending.'); }

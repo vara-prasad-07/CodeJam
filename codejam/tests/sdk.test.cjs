@@ -1,4 +1,4 @@
-﻿const {test}=require('node:test');
+const {test}=require('node:test');
 const assert=require('node:assert/strict');
 const sdk=require('@nexconn/chat');
 const {startNexconnBridge}=require('../out/nexconnClient.js');
@@ -16,7 +16,7 @@ function setup(t){
  const query=t.mock.method(sdk.BaseChannel,'createMessagesQuery',()=>({hasNext:false,loadNextPage:async()=>({isOk:true,data:{data:[packet()]}})}));
  startNexconnBridge({postMessage(data){messages.push(data);if(data.type==='sdkResult'){waiters.get(data.requestId)?.(data);}}});
  let seq=0;const call=(command,input={})=>new Promise(resolve=>{const requestId=String(++seq);waiters.set(requestId,resolve);events.dispatchEvent(new MessageEvent('message',{data:{type:'sdkCommand',requestId,command,input}}));});
- return {call,send,query,messages,packet,receive:()=>messageHandler._invoker.onMessageReceived({messages:[packet()]})};
+ return {call,send,query,messages,packet,receive:override=>messageHandler._invoker.onMessageReceived({messages:[override||packet()]})};
 }
 if(!globalThis.addEventListener){globalThis.addEventListener=()=>{};}
 test('real SDK bridge uses GroupChannel send, message handler and cloud history, and caches acknowledged retries',async t=>{
@@ -39,4 +39,16 @@ test('history membership rejection reports the actual cause instead of requestin
  const h=setup(t);await h.call('connect',{appKey:'public',token:'token',userId:'me',region:'SG'});
  h.query.mock.mockImplementationOnce(()=>({loadNextPage:async()=>({isOk:false,code:22406})}));
  const result=await h.call('history',{channelId:'group1'});assert.equal(result.ok,false);assert.match(result.error,/not a member/);assert.doesNotMatch(result.error,/Enable cloud/);
+});
+
+
+test('installed Nexconn SDK accepts native voice params and returns voice metadata in live delivery',async t=>{
+ const h=setup(t);await h.call('connect',{appKey:'public',token:'token',userId:'me',region:'SG'});
+ const message=new sdk.Message(new sdk.GroupChannelIdentifier('group1'),{remoteUrl:'https://media.example/voice.wav',duration:2,format:'wav',extra:JSON.stringify({codejam:1,clientId:'voice1',replyTo:'root',discussionId:'thread'})},sdk.MessageType.HD_VOICE);
+ message.messageId='voice';message.senderUserId='me';message.sentTime=Date.now();
+ t.mock.method(sdk.Helper,'createSendHDVoiceMessageParams',async file=>{const params=new sdk.SendHDVoiceMessageParams({remoteUrl:'',duration:2,format:'wav'});params.file=file;return {isOk:true,data:params};});
+ const upload=t.mock.method(sdk.GroupChannel.prototype,'sendMediaMessage',async params=>{assert.ok(params instanceof sdk.SendHDVoiceMessageParams);assert.equal(params.file.type,'audio/wav');assert.equal(JSON.parse(params.content.extra).discussionId,'thread');return {isOk:true,data:message};});
+ const sent=await h.call('sendVoice',{channelId:'group1',base64:Buffer.from('mocked WAV decode').toString('base64'),clientId:'voice1',replyTo:'root',discussionId:'thread'});
+ assert.equal(sent.ok,true);assert.equal(sent.data.voice.url,'https://media.example/voice.wav');assert.equal(upload.mock.calls.length,1);
+ h.receive(message);assert.equal(h.messages.filter(m=>m.type==='sdkMessages').at(-1).messages[0].voice.duration,2);
 });

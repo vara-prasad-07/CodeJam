@@ -2,7 +2,7 @@
   "name": "codejam-workspace",
   "displayName": "CodeJam Workspace",
   "description": "Repository-aware team chat, code discussions, searchable decisions, reviewed AI drafts, and audio huddles.",
-  "version": "1.0.7",
+  "version": "1.0.9",
   "engines": {
     "vscode": "^1.146.0"
   },
@@ -46,6 +46,10 @@
       {
         "command": "codejam.shareSelection",
         "title": "CodeJam: Share Selection with Team"
+      },
+      {
+        "command": "codejam.selectMicrophone",
+        "title": "CodeJam: Select Microphone"
       }
     ],
     "configuration": {
@@ -97,7 +101,8 @@
     "test:project": "npm run package && node --env-file=server/.env tests/live-project.mjs",
     "vsix": "vsce package --no-dependencies --out ../artifacts/ --baseContentUrl https://github.com/vara-prasad-07/CodeJam/blob/main/codejam --baseImagesUrl https://github.com/vara-prasad-07/CodeJam/raw/main/codejam",
     "set:publisher": "node scripts/set-publisher.cjs",
-    "check:release": "node scripts/check-release.cjs"
+    "check:release": "node scripts/check-release.cjs",
+    "build:recorder": "node scripts/build-recorder.cjs"
   },
   "devDependencies": {
     "@types/mocha": "^10.0.10",

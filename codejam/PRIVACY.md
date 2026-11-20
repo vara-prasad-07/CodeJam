@@ -8,7 +8,8 @@ CodeJam uses `https://codejam-vdmp.onrender.com` by default. Set `codejam.apiUrl
 - Rooms: membership, invitations, repository identity/name, discussions, pins and reactions are stored in Firestore. Pinned decisions and thread roots retain message/code snapshots.
 - Chat: messages, selected excerpts, relative file paths, lines, branch/commit, replies and mentions go through Nexconn and its configured message history.
 - Presence: room members see recent project-relative file/line focus and presence. Call metadata includes participation and mute state.
-- Audio: joining with microphone permission sends audio through Nexconn. CodeJam does not implement recording or transcription.
+- Live audio: joining a huddle with microphone permission sends audio through Nexconn.
+- Voice messages: clicking Record starts a bundled local microphone recorder. Audio is temporarily stored locally for preview and is sent to Nexconn only when you click Send voice. Discard, successful send, closing the view, or signing out cleans up that recording. An upload failure keeps it for retry while the view remains open. Unsent audio is not restored after restarting VS Code. No transcription is performed.
 - AI: selected context shown in the preview goes to Gemini when you request generation. The draft remains private in your client until you send it. Generation does not scan the entire repository automatically.
 - Sessions: app credentials use VS Code SecretStorage; the backend stores token hashes. Browser sign-in uses short-lived one-time tickets. The call tab uses sessionStorage for its limited reconnect session.
 

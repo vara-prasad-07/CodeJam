@@ -1,0 +1,52 @@
+name: Native voice recorders
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'codejam/native/recorder.c'
+      - 'codejam/native/vendor/**'
+      - 'codejam/scripts/build-recorder.cjs'
+      - '.github/workflows/native-recorder.yml'
+  pull_request:
+    paths:
+      - 'codejam/native/**'
+      - 'codejam/scripts/build-recorder.cjs'
+      - '.github/workflows/native-recorder.yml'
+permissions:
+  contents: read
+jobs:
+  recorder:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {os: windows-2022, platform: win32, arch: x64, compiler: cl, vcarch: amd64}
+          - {os: windows-2022, platform: win32, arch: arm64, compiler: cl, vcarch: amd64_arm64}
+          - {os: ubuntu-22.04, platform: linux, arch: x64, compiler: cc}
+          - {os: ubuntu-24.04-arm, platform: linux, arch: arm64, compiler: cc}
+          - {os: macos-15-intel, platform: darwin, arch: x64, compiler: cc}
+          - {os: macos-15, platform: darwin, arch: arm64, compiler: cc}
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: ilammy/msvc-dev-cmd@v1
+        if: matrix.platform == 'win32'
+        with:
+          arch: ${{ matrix.vcarch }}
+      - name: Build recorder only
+        working-directory: codejam
+        env:
+          CC: ${{ matrix.compiler }}
+          RECORDER_ARCH: ${{ matrix.arch }}
+        run: node scripts/build-recorder.cjs
+      - name: Archive executable permissions and checksum
+        shell: bash
+        run: tar -czf native-recorder-${{ matrix.platform }}-${{ matrix.arch }}.tar.gz -C codejam/native/bin ${{ matrix.platform }}-${{ matrix.arch }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: native-recorder-${{ matrix.platform }}-${{ matrix.arch }}
+          path: native-recorder-*.tar.gz
+          if-no-files-found: error

@@ -6,9 +6,29 @@ test('Firestore codec preserves nested records and the REST adapter uses update 
 });
 test('AI refuses secret context and sends only the explicitly previewed inputs, without posting any message',async()=>{
  const context={instruction:'Draft a handoff',repository:'test',messages:[{author:'Vara',text:'Expiry is wrong'}],code:{path:'src/auth.ts',line:1,endLine:1,code:'return session;'},diff:''};
- assert.throws(()=>sanitizeContext({...context,code:{path:'.env',code:'secret'}}),/Secret files/);assert.throws(()=>sanitizeContext({...context,code:{path:'key.ts',code:'-----BEGIN PRIVATE KEY-----'}}),/credential/);assert.throws(()=>sanitizeContext({...context,messages:[],code:null}),/Select discussion/);
+ assert.throws(()=>sanitizeContext({...context,code:{path:'.env',code:'secret'}}),/Secret files/);assert.throws(()=>sanitizeContext({...context,code:{path:'key.ts',code:'-----BEGIN PRIVATE KEY-----'}}),/credential/);
  const calls=[];const ai=createAI({apiKey:'server-only-key',model:'text-model',fetchImpl:async(url,options)=>{calls.push({url,options});return {ok:true,json:async()=>({candidates:[{content:{parts:[{text:'Draft for review'}]}}]})};}});
  const result=await ai.draft(context);assert.equal(result.text,'Draft for review');assert.equal(calls.length,1);const body=JSON.parse(calls[0].options.body);assert.deepEqual(JSON.parse(body.contents[0].parts[0].text),sanitizeContext(context));assert.ok(!calls[0].url.includes('server-only-key'));
+});
+
+test('AI answers general questions without project context and omits repository metadata',async()=>{
+ const requests=[];
+ const ai=createAI({apiKey:'test-provider-key',model:'test-model',fetchImpl:async(_url,options)=>{requests.push(JSON.parse(options.body));return {ok:true,json:async()=>({candidates:[{content:{parts:[{text:'An LLM is a large language model.'}]}}]})};}});
+ const result=await ai.draft({instruction:' What is an LLM? ',repository:'private/team-repo',messages:[],code:null,diff:''});
+ assert.match(result.text,/large language model/);assert.equal(requests.length,1);
+ assert.deepEqual(JSON.parse(requests[0].contents[0].parts[0].text),{instruction:'What is an LLM?',repository:'',messages:[],code:null,diff:''});
+ const policy=requests[0].systemInstruction.parts[0].text;
+ assert.match(policy,/general questions using general knowledge/);
+ assert.match(policy,/project-specific question.*ask for the missing details/);
+});
+
+test('AI rejects blank questions and credentials before calling Gemini, including question-only requests',async()=>{
+ let calls=0;const ai=createAI({apiKey:'test-key',model:'test-model',fetchImpl:async()=>{calls++;throw new Error('Provider should not be called');}});
+ for(const instruction of ['', '   ', 'x'.repeat(2001), 'Please use -----BEGIN PRIVATE KEY-----']){
+  await assert.rejects(ai.draft({instruction}),e=>e.status===400);
+ }
+ assert.equal(calls,0);
+ assert.deepEqual(sanitizeContext({instruction:'Explain recursion',messages:[null,17,{}, {author:'A',text:'  '}],code:{path:'a.ts',code:' '},diff:' \n ',repository:'private/repo'}),{instruction:'Explain recursion',repository:'',messages:[],code:null,diff:''});
 });
 
 

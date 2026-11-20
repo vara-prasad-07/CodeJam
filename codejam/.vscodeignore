@@ -15,5 +15,8 @@
 !media/codejam.svg
 !media/icon.png
 !licenses/**
+!native/bin/**/recorder
+!native/bin/**/recorder.exe
+!native/bin/**/sha256.txt
 
 **/*.map

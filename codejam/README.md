@@ -35,7 +35,9 @@ Mention names containing spaces with underscores: `@First_Last`.
 
 ## Review AI drafts before sharing
 
-Ask `@agent` or choose the AI action on a message. Select code, room/discussion messages and optional local Git diff. Preview context, generate a private Gemini draft, then review/edit before explicitly sending under your name. Generation never posts automatically.
+Ask `@agent` or use **Ask AI** for a general question. Project context is optional: leave the boxes unchecked to send only your question. For help with your project, opt into attached/shared code, room/discussion messages or a local Git diff. Asking about a message selects that message; discussion context keeps the root and recent replies together.
+
+Choose **Preview request**, generate a private Gemini answer, then review/edit before explicitly sending under your name. Changing your question or context requires a fresh preview. Empty optional sources are identified in the preview. Generation never posts automatically.
 
 Context goes to Gemini when you generate. File-name and credential-pattern checks are limited: review everything you select before sending.
 
@@ -74,3 +76,9 @@ CodeJam source is available under the [MIT license](LICENSE.txt). Bundled third-
 ## Earlier preview installations
 
 The extension identifier is now `CodeJam.codejam-workspace`. If you installed the earlier `CodeJam.codejam` preview, uninstall it before installing this build, then sign in again with the same account. Your existing rooms remain on the backend.
+
+### Voice messages
+
+In a connected local desktop room, click the microphone beside Ask AI. Record 1?60 seconds, stop, listen to the local preview, then Send voice or discard. Your text/code draft stays separate. Voice messages upload through Nexconn and play directly in chat. An upload failure keeps the clip for retry while the view stays open. Use **CodeJam: Select Microphone** to choose a device or restore the system default.
+
+The matching native recorder must be bundled with the extension. Missing platform helpers and remote workspaces show an availability message. See [native recorder development](native/README.md) for platform builds and verification.

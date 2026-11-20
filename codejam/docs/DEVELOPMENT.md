@@ -49,7 +49,7 @@ Google opens your browser at `http://localhost:3000/signin`. Complete the popup 
 - Chat: actual Nexconn SDK send/receive, cloud history pagination, replies, mentions (`@First_Last`), selected code and failed-send draft retention. Sidebar/full view share one SDK connection.
 - Discussions: dedicated tab with open/resolved filters, persistent threads, independent drafts, replies, resolve/reopen, reactions, path/lines/branch/commit, revision warnings, saved excerpt versus working-copy diff and local file opening. Start a discussion through a message's More actions.
 - Decisions: pin a message/thread, search title/text/path, inspect its source and unpin with confirmation.
-- AI: ask `@agent` or use a message action. Choose code, messages and optional local Git diff. Preview context, generate a private draft, review/edit, then explicitly send under your name. Generation never posts automatically.
+- AI: ask general questions with no project context or opt into code, messages and local Git diff. Message actions include the specific source; discussions retain the root snapshot and up to 19 recent replies. General requests omit repository identity. Preview request, generate a private answer/draft, review/edit, then explicitly send under your name. Editing question/context invalidates its snapshot; late responses are matched to the active request and room. Generation never posts automatically.
 - Team: recent presence with project-relative editor focus, member roster, actual call state and mini controls.
 - Audio: actual Nexconn Call SDK in a separate browser page for microphone access. Separate call identities keep editor chat connected. Start/join, allow microphone and keep the tab open. VS Code mute/leave controls operate your browser session.
 
@@ -88,3 +88,7 @@ Automated tests cover membership, persistence, failures, AI context boundaries, 
 Install the generated VSIX through **Extensions > ... > Install from VSIX**. Run the backend separately. The VSIX in the outer artifacts folder excludes credentials, backend files and test data. The package is unpublished; `codejam-team` is a local package publisher identifier.
 
 See [DEMO.md](DEMO.md) for acceptance steps. Google popup, rendered layout and two-way microphone/audio still need manual verification because computer/browser access was unavailable. Public hosting, Marketplace publication and demo video upload have not been performed.
+
+## Native voice messages
+
+See [the recorder implementation notes](../native/README.md). Native helper compilation is independent from extension packaging. Voice controls bypass the backend refresh queue so Stop/Discard do not wait on HTTP polling. Nexconn upload/delivery tests use mocked providers; the Windows microphone smoke test is local-only. Cross-platform CI builds need microphone testing on real systems before release.

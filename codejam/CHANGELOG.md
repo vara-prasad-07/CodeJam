@@ -1,6 +1,14 @@
 # Changelog
 
-## Unreleased
+## 1.0.9
+
+Add native desktop voice recording with a default/selectable microphone, local preview, explicit send/discard, upload progress, and Nexconn voice delivery and history. Preserve text drafts and room/thread destinations, limit clips to 1?60 seconds, and stop capture when the owning view hides or closes.
+
+Tighten workspace density: compact brand and room rows, smaller section headings, consistent control sizing, and reduced spacing across chat, setup, decisions, team and AI dialogs.
+
+## 1.0.8
+
+Allow general AI questions without selecting project context. Make context optional in Ask AI, omit repository metadata from question-only requests, and show unavailable/empty sources. Preserve source-specific and discussion-root context, invalidate edited previews, and ignore stale AI responses after a room switch. Keep answers private until review and explicit send.
 
 Keep backend HTTP startup independent of Firestore availability. Skip cloud migration-marker access when no legacy file exists; defer required legacy imports with shared attempts and retry backoff, preserving existing records and partial progress. Keep liveness/configuration endpoints available during database quota outages while data endpoints return errors.
 

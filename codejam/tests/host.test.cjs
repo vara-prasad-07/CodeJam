@@ -1,4 +1,4 @@
-﻿const {test}=require('node:test');
+const {test}=require('node:test');
 const assert=require('node:assert/strict');
 const vm=require('node:vm');
 const fs=require('node:fs');
@@ -8,6 +8,19 @@ const {createRequire}=require('node:module');
 
 test('extension shares one SDK connection across views and sends exclusively through the SDK bridge',async t=>{
  const folder=fs.mkdtempSync(path.join(os.tmpdir(),'codejam-host-'));t.after(()=>fs.rmSync(folder,{recursive:true,force:true}));
+ let fakeRecorder;
+ class FakeRecorder {
+  available=true;
+  constructor(_root,changed){this.changed=changed;fakeRecorder=this;}
+  emit(){this.changed(this.state?{...this.state}:undefined,this.state?.phase==='preview'?'UklGRg==':undefined);}
+  async start(destination){this.state={...destination,id:'local-voice',clientId:'stable-voice',phase:'recording',duration:2};this.emit();}
+  async stop(){this.state.phase='preview';this.emit();}
+  payload(id){assert.equal(id,this.state.id);return {state:{...this.state},base64:'UklGRg=='};}
+  uploading(progress=0){Object.assign(this.state,{phase:'uploading',progress});this.emit();}
+  retry(error){Object.assign(this.state,{phase:'preview',error});this.emit();}
+  async cancel(){this.state=undefined;this.emit();}
+  async dispose(){await this.cancel();}
+ }
  const commands=new Map(),stores={workspace:new Map(),global:new Map(),secret:new Map([['codejam.session.nexconn.https://codejam-vdmp.onrender.com','application-session']])},views=[];let provider,room=null;
  const disposable=()=>({dispose(){}});
  const makeStore=store=>({get:(key,fallback)=>store.has(key)?store.get(key):fallback,update:async(key,value)=>store.set(key,value)});
@@ -15,7 +28,7 @@ test('extension shares one SDK connection across views and sends exclusively thr
  const makeView=()=>{
   let listener,disposeListener;const posts=[];
   const webview={options:{},cspSource:'vscode-resource:',asWebviewUri:uri=>'vscode-resource:'+uri.fsPath,onDidReceiveMessage(fn){listener=fn;return disposable();},async postMessage(data){posts.push(data);if(data.type==='sdkCommand'){
-   const result=data.command==='connect'?{userId:'me'}:data.command==='history'?{messages:[],hasMore:false}:data.command==='send'?{id:'sdk-ack',channelId:'group1',userId:'me',text:data.input.text,createdAt:new Date().toISOString(),clientId:data.input.clientId}:{};
+   const result=data.command==='connect'?{userId:'me'}:data.command==='history'?{messages:[],hasMore:false}:data.command==='sendVoice'?{id:'sdk-voice',channelId:'group1',userId:'me',text:'',voice:{url:'https://media.example/voice.wav',duration:2,mimeType:'audio/wav'},createdAt:new Date().toISOString(),clientId:data.input.clientId,replyTo:data.input.replyTo}:data.command==='send'?{id:'sdk-ack',channelId:'group1',userId:'me',text:data.input.text,createdAt:new Date().toISOString(),clientId:data.input.clientId}:{};
    queueMicrotask(()=>listener({type:'sdkResult',requestId:data.requestId,ok:true,data:result}));
   }return true;}};
   const view={webview,posts,onDidDispose(fn){disposeListener=fn;return disposable();},receive:data=>listener(data),close:()=>disposeListener?.()};views.push(view);return view;
@@ -29,12 +42,13 @@ test('extension shares one SDK connection across views and sends exclusively thr
   else if(route.endsWith('/details')){data={pins:[],discussions:[],reactions:[],presence:[],call:null};}
   else if(route.endsWith('/chat-membership')){data={ok:true};}
   else if(route.endsWith('/presence')){data={ok:true};}
+  else if(route.endsWith('/draft')){const body=JSON.parse(options.body);assert.equal(body.context.instruction,'What is an LLM?');assert.equal(body.context.repository,'');assert.deepEqual(body.context.messages,[]);assert.equal(body.context.code,null);assert.equal(body.context.diff,'');data={text:'An LLM is a large language model.',model:'test-model'};}
   else if(route==='/rooms'){data={userId:'me',rooms:room?[room]:[]};}
   else{throw new Error('Unexpected HTTP route '+route);}
   return {ok:true,json:async()=>data};
  };
  const module={exports:{}};const builtRequire=createRequire(path.join(__dirname,'../out/extension.js')); 
- vm.runInNewContext(fs.readFileSync(path.join(__dirname,'../out/extension.js'),'utf8'),{module,exports:module.exports,require:name=>name==='vscode'?vscode:builtRequire(name),console,fetch:fakeFetch,URL,AbortSignal,setTimeout,clearTimeout,setInterval,clearInterval,Buffer,process});
+ vm.runInNewContext(fs.readFileSync(path.join(__dirname,'../out/extension.js'),'utf8'),{module,exports:module.exports,require:name=>name==='vscode'?vscode:name==='./voice'?{VoiceRecorder:FakeRecorder}:builtRequire(name),console,fetch:fakeFetch,URL,AbortSignal,setTimeout,clearTimeout,setInterval,clearInterval,Buffer,process});
  module.exports.activate(context);t.after(()=>{for(const item of context.subscriptions){item.dispose();}});
  const until=async predicate=>{const deadline=Date.now()+4000;while(!predicate()){if(Date.now()>deadline){throw new Error('Timed out waiting for extension bridge');}await new Promise(r=>setTimeout(r,10));}};
  const first=makeView();provider.resolveWebviewView(first);first.receive({type:'ready'});await until(()=>first.posts.some(p=>p.type==='state'&&p.connected));
@@ -46,5 +60,21 @@ test('extension shares one SDK connection across views and sends exclusively thr
  assert.ok(first.posts.some(p=>p.type==='sdkCommand'&&p.command==='send'));
  assert.ok(!calls.some(route=>route.endsWith('/messages')));
  assert.equal(second.posts.filter(p=>p.type==='state').at(-1).rooms[0].messages[0].id,'sdk-ack');
+ second.receive({type:'prepareContext',instruction:'What is an LLM?',includeCode:false,includeMessages:false,includeDiff:false,operation:'preview-question'});
+ await until(()=>second.posts.some(p=>p.type==='contextPreview'&&p.operation==='preview-question'));
+ const preview=second.posts.find(p=>p.type==='contextPreview'&&p.operation==='preview-question');assert.equal(preview.context.repository,'');assert.ok(preview.contextId);
+ second.receive({type:'generateDraft',contextId:preview.contextId,operation:'generate-question'});
+ await until(()=>second.posts.some(p=>p.type==='draft'&&p.operation==='generate-question'));
+ assert.equal(views.flatMap(v=>v.posts).filter(p=>p.type==='sdkCommand'&&p.command==='send').length,1,'a generated answer must stay private');
+ second.receive({type:'voiceStart',replyTo:'sdk-ack',operation:'record'});await until(()=>second.posts.some(p=>p.type==='result'&&p.operation==='record'));
+ assert.equal(fakeRecorder.state.roomId,'room1');assert.equal(fakeRecorder.state.replyTo,'sdk-ack');
+ first.receive({type:'sendVoice',voiceId:'local-voice',operation:'wrong-owner'});await until(()=>first.posts.some(p=>p.type==='result'&&p.operation==='wrong-owner'));
+ assert.equal(first.posts.find(p=>p.type==='result'&&p.operation==='wrong-owner').ok,false);
+ assert.equal(views.flatMap(v=>v.posts).filter(p=>p.type==='sdkCommand'&&p.command==='sendVoice').length,0);
+ second.receive({type:'voiceStop',voiceId:'local-voice',operation:'stop'});await until(()=>second.posts.some(p=>p.type==='result'&&p.operation==='stop'));
+ second.receive({type:'sendVoice',voiceId:'local-voice',roomId:'forged-room',operation:'send-voice'});await until(()=>second.posts.some(p=>p.type==='result'&&p.operation==='send-voice'));
+ const voiceSend=first.posts.find(p=>p.type==='sdkCommand'&&p.command==='sendVoice');assert.equal(voiceSend.input.channelId,'group1');assert.equal(voiceSend.input.clientId,'stable-voice');assert.equal(voiceSend.input.replyTo,'sdk-ack');
+ assert.ok(second.posts.filter(p=>p.type==='state').at(-1).rooms[0].messages.some(m=>m.id==='sdk-voice'&&m.voice.duration===2));assert.equal(fakeRecorder.state,undefined);
+ assert.ok(!calls.some(route=>route.endsWith('/messages')||route.includes('upload')),'voice transport must stay with Nexconn');
  first.close();await until(()=>second.posts.some(p=>p.type==='sdkCommand'&&p.command==='connect'));
 });

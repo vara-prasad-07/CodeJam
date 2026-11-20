@@ -1,4 +1,4 @@
-﻿import { test } from 'node:test';
+import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createRoomServer, listenAddress } from './index.mjs';
 import { createMemoryStore } from './firestore.mjs';
@@ -65,4 +65,17 @@ test('Render listens publicly on the platform port while local development stays
  assert.deepEqual(listenAddress({RENDER:'true',PORT:'10000'}),{host:'0.0.0.0',port:10000});
  assert.deepEqual(listenAddress({}),{host:'127.0.0.1',port:3000});
  assert.deepEqual(listenAddress({RENDER:'true',HOST:'0.0.0.0',PORT:'4321'}),{host:'0.0.0.0',port:4321});
+});
+
+
+test('voice discussion snapshots retain audio metadata and reject unsafe media URLs',async t=>{
+ const h=await setup(t),a=await h.login('voice@example.test','Voice');
+ const room=(await h.api('/rooms',{name:'Voice room',repository:'repo'},a.token)).data.room;
+ const source={id:'voice1',userId:a.user.id,text:'',voice:{url:'https://media.example/voice.wav',duration:2,mimeType:'audio/wav'}};
+ const created=await h.api(`/rooms/${room.id}/discussions`,{title:'Discuss this recording',source},a.token);
+ assert.equal(created.status,200);assert.deepEqual(created.data.discussion.source.voice,source.voice);
+ await h.restart();const details=(await h.api(`/rooms/${room.id}/details`,undefined,a.token)).data;assert.deepEqual(details.discussions[0].source.voice,source.voice);
+ for(const voice of [{...source.voice,url:'file:///private.wav'},{...source.voice,url:'https://user:secret@media.example/audio'},{...source.voice,duration:61}]){
+  assert.equal((await h.api(`/rooms/${room.id}/discussions`,{title:'Invalid',source:{...source,id:'invalid',voice}},a.token)).status,400);
+ }
 });

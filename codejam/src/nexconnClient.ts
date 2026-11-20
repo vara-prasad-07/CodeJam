@@ -1,18 +1,19 @@
-﻿import { NCEngine, AreaCode, LogLevel, ConnectionStatus, ConnectionStatusHandler, MessageHandler, MessageType, Message, GroupChannel, GroupChannelIdentifier, BaseChannel, SendTextMessageParams, MessagesQuery, ChannelType, MentionedType } from '@nexconn/chat';
+import { NCEngine, AreaCode, LogLevel, ConnectionStatus, ConnectionStatusHandler, MessageHandler, MessageType, Message, GroupChannel, GroupChannelIdentifier, BaseChannel, SendTextMessageParams, MessagesQuery, ChannelType, MentionedType, Helper } from '@nexconn/chat';
 import type { Attachment } from './model';
 
 type Host = { postMessage(data: unknown): void };
 interface Session { appKey: string; token: string; userId: string; region: 'SG' | 'NA' | 'SA' }
 interface SendInput { channelId: string; text: string; attachment?: Attachment; replyTo?: string; clientId: string; discussionId?: string; mentions?: string[]; reviewedDraft?: boolean }
+interface SendVoiceInput { channelId: string; base64: string; replyTo?: string; discussionId?: string; clientId: string }
 export function startNexconnBridge(host: Host) {
  let initializedKey = '', connectedUser = '';
  const queries = new Map<string, MessagesQuery>();
  const sent = new Map<string, Promise<unknown>>();
  const normalize = (m: Message) => {
-  if (m.messageType !== MessageType.TEXT || m.channelIdentifier.channelType !== ChannelType.GROUP) { return null; }
+  if ((m.messageType !== MessageType.TEXT && m.messageType !== MessageType.HD_VOICE) || m.channelIdentifier.channelType !== ChannelType.GROUP) { return null; }
   let extra: Record<string, unknown> = {};
   try { const parsed = JSON.parse(m.content.extra || '{}'); if (parsed?.codejam === 1) { extra = parsed; } } catch { /* Ordinary Nexconn text. */ }
-  return { id: m.messageId, channelId: m.channelIdentifier.channelId, channelType: m.channelIdentifier.channelType, userId: m.senderUserId, text: m.content.text || '', createdAt: new Date(m.sentTime).toISOString(), attachment: extra.attachment, replyTo: extra.replyTo, clientId: extra.clientId, discussionId: extra.discussionId, reviewedDraft: extra.reviewedDraft === true, mentions: m.content.mentionedInfo?.userIdList || [] };
+  return { id: m.messageId, channelId: m.channelIdentifier.channelId, channelType: m.channelIdentifier.channelType, userId: m.senderUserId, text: m.content.text || '', createdAt: new Date(m.sentTime).toISOString(), attachment: extra.attachment, ...(m.messageType === MessageType.HD_VOICE?{voice:{url:m.content.remoteUrl,duration:m.content.duration,mimeType:'audio/wav'}}:{}), replyTo: extra.replyTo, clientId: extra.clientId, discussionId: extra.discussionId, reviewedDraft: extra.reviewedDraft === true, mentions: m.content.mentionedInfo?.userIdList || [] };
  };
  const messages = (items: Message[]) => items.map(normalize).filter(Boolean);
  function initialize(session: Session) {
@@ -58,6 +59,23 @@ export function startNexconnBridge(host: Host) {
   sent.set(input.clientId, promise);
   try { return await promise; } catch (error) { sent.delete(input.clientId); throw error; }
  }
+ async function sendVoice(input: SendVoiceInput) {
+  if (sent.has(input.clientId)) { return sent.get(input.clientId); }
+  if (NCEngine.getConnectionStatus() !== ConnectionStatus.CONNECTED) { throw new Error('Nexconn is disconnected. Reconnect before sending.'); }
+  const promise = (async () => {
+   if (typeof input.base64 !== 'string' || input.base64.length > 2565500 || !/^[A-Za-z0-9+/]+={0,2}$/.test(input.base64)) { throw new Error('Invalid voice recording.'); }
+   const bytes = Uint8Array.from(atob(input.base64),c=>c.charCodeAt(0));
+   const prepared = await Helper.createSendHDVoiceMessageParams(new File([bytes],'voice-message.wav',{type:'audio/wav'}));
+   if (!prepared.isOk || !prepared.data) { throw new Error('Cannot prepare the voice message. Your recording is kept.'); }
+   prepared.data.content.extra = JSON.stringify({codejam:1,replyTo:input.replyTo,discussionId:input.discussionId,clientId:input.clientId});
+   prepared.data.onUploadProgress = progress => host.postMessage({type:'sdkUpload',clientId:input.clientId,progress});
+   const result = await new GroupChannel(input.channelId).sendMediaMessage(prepared.data);
+   if (!result.isOk || !result.data) { throw new Error(`Voice upload failed (code ${result.code}). Your recording is kept for retry.`); }
+   return normalize(result.data);
+  })();
+  sent.set(input.clientId,promise);
+  try { return await promise; } catch (error) { sent.delete(input.clientId); throw error; }
+ }
  globalThis.addEventListener('message', async event => {
   const data = event.data;
   if (data?.type !== 'sdkCommand') { return; }
@@ -66,6 +84,7 @@ export function startNexconnBridge(host: Host) {
    if (data.command === 'connect') { result = await connect(data.input); }
    else if (data.command === 'history') { result = await history(data.input.channelId, data.input.older); }
    else if (data.command === 'send') { result = await send(data.input); }
+   else if (data.command === 'sendVoice') { result = await sendVoice(data.input); }
    else if (data.command === 'disconnect') { await NCEngine.disconnect(); connectedUser = ''; queries.clear(); sent.clear(); }
    else { throw new Error('Unsupported SDK command.'); }
    host.postMessage({ type: 'sdkResult', requestId: data.requestId, ok: true, data: result });

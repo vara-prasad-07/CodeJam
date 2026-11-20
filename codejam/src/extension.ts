@@ -5,6 +5,8 @@ import { realpath } from 'node:fs/promises';
 import { detectRepository, readGitDiff, Repository } from './repository';
 import { createMessage, createRoom, LocalState, Room, ChatMessage } from './model';
 import { RefreshPolicy } from './refreshPolicy';
+import { buildAIContext } from './aiContext';
+import { VoiceRecorder } from './voice';
 
 export function activate(context: vscode.ExtensionContext) {
  const views = new Set<vscode.Webview>();
@@ -20,6 +22,13 @@ export function activate(context: vscode.ExtensionContext) {
  const loaded = new Set<string>();
  let account: {id:string; name:string; email?:string; isGuest?:boolean} | undefined, needsAuth = false, aiConfigured = false;
  let pendingAttachment: unknown;
+ let voiceOwner: vscode.Webview | undefined;
+ const recorder = new VoiceRecorder(context.extensionUri.fsPath,(state,audioBase64,error) => {
+  const owner = voiceOwner;
+  if (owner) { void owner.postMessage({type:'voiceState',state:state || null,audioBase64,error}); }
+  if (!state) { voiceOwner = undefined; }
+ });
+ const voiceUnavailable = () => vscode.env?.remoteName ? 'Voice recording needs a local desktop extension host. It is not available in this remote workspace yet.' : !recorder.available ? 'The native recorder for your platform is missing from this extension installation.' : '';
  const contexts = new Map<string, {roomId:string; context:unknown}>();
  const snapshots = new Map<string, string>();
  const linked = () => { const room = activeRoom(); return Boolean(room && repo && ((!room.repositoryIdentity || room.repositoryIdentity === repo.identity) || context.workspaceState.get<Record<string,string>>('codejam.links', {})[repo.root] === room.id)); };
@@ -27,8 +36,11 @@ export function activate(context: vscode.ExtensionContext) {
  const apiUrl = () => config().get<string>('apiUrl', 'https://codejam-vdmp.onrender.com').trim().replace(/\/$/, '');
  const browserUrl = () => { const url = new URL(apiUrl()); if (url.hostname === '127.0.0.1') { url.hostname = 'localhost'; } return url.origin; };
  const name = () => config().get<string>('displayName', '').trim() || 'Developer';
- const snapshot = () => ({ type: 'state', ...shared, repo, mode: 'nexconn', connection, connected: sdkConnected, updatesPaused: !refreshPolicy.canPoll, userId: serverUserId, displayName: account?.name || name(), user: account, authenticated: Boolean(account) && !needsAuth, aiConfigured, linked: linked() });
- const broadcast = async () => { await Promise.all([...views].map(v => v.postMessage(snapshot()))); };
+ const snapshot = () => ({ type: 'state', ...shared, repo, mode: 'nexconn', connection, connected: sdkConnected, updatesPaused: !refreshPolicy.canPoll, userId: serverUserId, displayName: account?.name || name(), user: account, authenticated: Boolean(account) && !needsAuth, aiConfigured, linked: linked(), voiceSupported:!voiceUnavailable(), voiceUnavailable:voiceUnavailable() });
+ const broadcast = async () => {
+  if (recorder.state && recorder.state.roomId !== shared.active) { await recorder.cancel(); }
+  await Promise.all([...views].map(v => v.postMessage(snapshot())));
+ };
  const notice = (webview: vscode.Webview, text: string) => webview.postMessage({ type: 'notice', text });
  const activeRoom = () => shared.rooms.find(r => r.id === shared.active);
 
@@ -63,7 +75,7 @@ export function activate(context: vscode.ExtensionContext) {
   if (!owner) { return Promise.reject(new Error('Open a CodeJam view to connect the Nexconn Chat SDK.')); }
   const requestId = randomUUID();
   return new Promise((resolve, reject) => {
-   const timer = setTimeout(() => { rpc.delete(requestId); reject(new Error('Nexconn SDK timed out. Your draft is kept. Click Reconnect and retry.')); }, 25000);
+   const timer = setTimeout(() => { rpc.delete(requestId); reject(new Error('Nexconn SDK timed out. Your draft is kept. Click Reconnect and retry.')); }, command === 'sendVoice' ? 120000 : 25000);
    rpc.set(requestId, { owner, resolve, reject, timer });
    void owner.postMessage({ type: 'sdkCommand', command, input, requestId }).then(ok => {
     if (!ok) { clearTimeout(timer); rpc.delete(requestId); reject(new Error('The Nexconn client view is unavailable. Reopen CodeJam and retry.')); }
@@ -78,7 +90,7 @@ export function activate(context: vscode.ExtensionContext) {
    if (!r || typeof item.id !== 'string' || typeof item.userId !== 'string' || !Number.isFinite(Date.parse(item.createdAt))) { continue; }
    try {
     const user = { id: item.userId, name: r.members.find(m => m.id === item.userId)?.name || item.userId };
-    const validated = createMessage({ text: item.text, attachment: item.attachment }, user, r);
+    const validated = createMessage({ text: item.text, attachment: item.attachment, voice:item.voice }, user, r);
     const message: ChatMessage = { ...validated, id: item.id, createdAt: item.createdAt,
      replyTo: typeof item.replyTo === 'string' ? item.replyTo.slice(0, 200) : undefined,
      clientId: typeof item.clientId === 'string' ? item.clientId : undefined, discussionId: typeof item.discussionId === 'string' ? item.discussionId : undefined, mentions: Array.isArray(item.mentions) ? item.mentions.filter((id:unknown) => typeof id === 'string').slice(0,50) : [], reviewedDraft: item.reviewedDraft === true };
@@ -141,6 +153,7 @@ export function activate(context: vscode.ExtensionContext) {
  }
  function findSource(id:string) { const r = activeRoom(); return r?.messages.find(m => m.id === id) || r?.discussions?.find(d => d.source.id === id)?.source || r?.pins?.find(p => p.source.id === id)?.source; }
  async function acceptSession(result:any) {
+  await recorder.cancel();
   refreshPolicy.reset();
   if (sdkOwner && sdkConnected) { await sdk('disconnect'); } sdkConnected = false; loaded.clear(); contexts.clear(); shared = {rooms:[]};
   await context.secrets.store('codejam.session.nexconn.' + apiUrl(), result.token); account = result.user; serverUserId = result.user.id; needsAuth = false;
@@ -186,6 +199,8 @@ export function activate(context: vscode.ExtensionContext) {
     await refresh();
    }
    else if (data.type === 'switchRoom') {
+    if (recorder.state?.phase === 'uploading') { throw new Error('Wait for your voice message to finish sending.'); }
+    await recorder.cancel();
     if (!shared.rooms.some(r => r.id === data.id)) { throw new Error('Room not found.'); }
     shared.active = data.id as string;
     await context.workspaceState.update(`codejam.active.nexconn.${apiUrl()}`, shared.active);
@@ -194,6 +209,35 @@ export function activate(context: vscode.ExtensionContext) {
     await broadcast();
    }
    else if (data.type === 'loadOlder') { await loadHistory(true); await broadcast(); }
+   else if (data.type === 'voiceStart') {
+    const unavailable = voiceUnavailable(); if (unavailable) { throw new Error(unavailable); }
+    const room = activeRoom();
+    if (!room?.channelId || !sdkConnected || !account || needsAuth) { throw new Error('Connect to a room before recording a voice message.'); }
+    if (recorder.state) { throw new Error('Finish or discard your current recording first.'); }
+    const discussion = typeof data.discussionId === 'string' ? room.discussions?.find(d => d.id === data.discussionId) : undefined;
+    if (data.discussionId && !discussion) { throw new Error('Discussion not found.'); }
+    const replyTo = discussion?.source.id || (typeof data.replyTo === 'string' ? data.replyTo : undefined);
+    if (replyTo && ![...room.messages,...(room.discussions || []).map(d=>d.source),...(room.pins || []).map(p=>p.source)].some(m=>m.id===replyTo)) { throw new Error('The original message is no longer available.'); }
+    voiceOwner = webview;
+    await recorder.start({roomId:room.id,discussionId:discussion?.id,replyTo},context.globalState.get<string>('codejam.microphone',''));
+   }
+   else if (data.type === 'voiceStop' || data.type === 'voiceDiscard') {
+    if (voiceOwner !== webview || recorder.state?.id !== data.voiceId) { throw new Error('This recording is no longer available in this view.'); }
+    if (recorder.state?.phase === 'uploading') { throw new Error('Wait for your voice message to finish sending.'); }
+    if (data.type === 'voiceStop') { await recorder.stop(); } else { await recorder.cancel(); }
+   }
+   else if (data.type === 'sendVoice') {
+    if (voiceOwner !== webview) { throw new Error('Record a voice message in this view first.'); }
+    const {state:voice,base64} = recorder.payload(data.voiceId), room = shared.rooms.find(r=>r.id===voice.roomId);
+    if (!room?.channelId || shared.active !== room.id || (voice.discussionId && !room.discussions?.some(d=>d.id===voice.discussionId))) { throw new Error('The original room or discussion is no longer available.'); }
+    await ensureChat();
+    recorder.uploading();
+    try {
+     const existing = room.messages.find(m=>m.clientId===voice.clientId && m.userId===serverUserId);
+     if (!existing) { applyMessages([await sdk('sendVoice',{channelId:room.channelId,base64,replyTo:voice.replyTo,discussionId:voice.discussionId,clientId:voice.clientId})]); }
+     await recorder.cancel(); await broadcast();
+    } catch (error) { recorder.retry((error as Error).message); throw error; }
+   }
    else if (data.type === 'send') {
     const room = shared.rooms.find(r => r.id === data.roomId);
     if (!room?.channelId || !operation) { throw new Error('Choose a Nexconn room before sending.'); }
@@ -224,6 +268,7 @@ export function activate(context: vscode.ExtensionContext) {
     await acceptSession(result); await refresh();
    }
    else if (data.type === 'signOut') {
+    await recorder.cancel();
     await request('/auth/logout', {}); if (sdkOwner) { await sdk('disconnect'); }
     await context.secrets.delete('codejam.session.nexconn.' + apiUrl()); shared = {rooms:[]}; account = undefined; serverUserId = ''; needsAuth = true; sdkConnected = false; loaded.clear(); await broadcast();
    }
@@ -248,14 +293,12 @@ export function activate(context: vscode.ExtensionContext) {
    else if (data.type === 'renewInvite') { const result = await request('/rooms/' + shared.active + '/invite',{}); Object.assign(activeRoom()!,result.room,{messages:activeRoom()!.messages}); await broadcast(); }
    else if (data.type === 'prepareContext') {
     const r = activeRoom(); if (!r) { throw new Error('Choose a room first.'); }
-    const code = data.includeCode ? data.attachment || (data.sourceId ? findSource(String(data.sourceId))?.attachment : undefined) : null;
-    const messages = data.includeMessages ? r.messages.filter(m => !data.discussionId || m.discussionId === data.discussionId || m.id === r.discussions?.find(d => d.id === data.discussionId)?.source.id).slice(-20).map(m => ({author:m.author,text:m.text})) : [];
-    const contextData = {instruction:data.instruction,repository:repo?.identity || r.repositoryIdentity,messages,code,diff:data.includeDiff && repo ? await readGitDiff(repo.root) : ''};
-    const contextId = randomUUID(); contexts.set(contextId,{roomId:r.id,context:contextData}); if (contexts.size > 20) { contexts.delete(contexts.keys().next().value!); } await webview.postMessage({type:'contextPreview',context:contextData,contextId});
+    const {context:contextData,warnings} = await buildAIContext(data,r,repo?.identity || r.repositoryIdentity || '',async () => repo?.detected ? readGitDiff(repo.root) : '');
+    const contextId = randomUUID(); contexts.set(contextId,{roomId:r.id,context:contextData}); if (contexts.size > 20) { contexts.delete(contexts.keys().next().value!); } await webview.postMessage({type:'contextPreview',context:contextData,contextId,warnings,operation});
    }
    else if (data.type === 'generateDraft') {
     const prepared = contexts.get(String(data.contextId)); if (!prepared || prepared.roomId !== shared.active) { throw new Error('Preview the context for this room first.'); }
-    const result = await request('/rooms/' + shared.active + '/draft',{context:prepared.context}); await webview.postMessage({type:'draft',text:result.text,model:result.model});
+    const result = await request('/rooms/' + shared.active + '/draft',{context:prepared.context}); await webview.postMessage({type:'draft',text:result.text,model:result.model,operation});
    }
    else if (data.type === 'openCall') { const result = await request('/rooms/' + shared.active + '/call-ticket',{}); await vscode.env.openExternal(vscode.Uri.parse(browserUrl() + '/call#' + result.ticket)); }
    else if (data.type === 'callControl') { await request('/rooms/' + shared.active + '/call/control',{action:data.action}); await notice(webview,'Control sent to your call browser.'); }
@@ -289,6 +332,7 @@ export function activate(context: vscode.ExtensionContext) {
   }
  }
  function release(webview: vscode.Webview) {
+  if (voiceOwner === webview) { void recorder.cancel(); }
   views.delete(webview);
   readyViews.delete(webview);
   for (const [id, pending] of rpc) { if (pending.owner === webview) { clearTimeout(pending.timer); pending.reject(new Error('The Nexconn client view closed. Retry from the other CodeJam view.')); rpc.delete(id); } }
@@ -298,6 +342,7 @@ export function activate(context: vscode.ExtensionContext) {
  function setVisible(webview: vscode.Webview, visible: boolean) {
   if (visible) { visibleViews.add(webview); if (readyViews.has(webview)) { scheduleBackground(); } }
   else { visibleViews.delete(webview); }
+  if (!visible && voiceOwner === webview && ['starting','recording','stopping'].includes(recorder.state?.phase || '')) { void recorder.cancel(); }
  }
  function scheduleBackground() {
   if (backgroundQueued || refreshing || !visibleViews.size || needsAuth || !refreshPolicy.canPoll) { return; }
@@ -311,19 +356,21 @@ export function activate(context: vscode.ExtensionContext) {
   const resource = (file: string) => webview.asWebviewUri(vscode.Uri.joinPath(context.extensionUri, 'media', file));
   const nonce = randomBytes(16).toString('hex');
   // Nexconn supplies regional navigation and WebSocket hosts dynamically in its token.
-  webview.html = `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; connect-src https: wss:; style-src ${webview.cspSource}; script-src 'nonce-${nonce}';"><link rel="stylesheet" href="${resource('style.css')}"><title>CodeJam</title></head><body><div id="app"><p>Connecting to Nexconn…</p></div><script nonce="${nonce}" src="${resource('nexconn.js')}"></script><script nonce="${nonce}" src="${resource('app.js')}"></script></body></html>`;
+  webview.html = `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; connect-src https: wss:; media-src https: blob:; style-src ${webview.cspSource}; script-src 'nonce-${nonce}';"><link rel="stylesheet" href="${resource('style.css')}"><title>CodeJam</title></head><body><div id="app"><p>Connecting to Nexconn…</p></div><script nonce="${nonce}" src="${resource('nexconn.js')}"></script><script nonce="${nonce}" src="${resource('app.js')}"></script></body></html>`;
   context.subscriptions.push(webview.onDidReceiveMessage(input => {
    // Resolve SDK RPCs immediately: the command queue may be awaiting this result.
    if (input?.type === 'sdkResult') {
     const pending = rpc.get(input.requestId);
     if (pending?.owner === webview) { clearTimeout(pending.timer); rpc.delete(input.requestId); if (input.ok) { pending.resolve(input.data); } else { pending.reject(new Error(String(input.error || 'Nexconn SDK operation failed.'))); } }
    } else if (input?.type === 'sdkMessages' && sdkOwner === webview) { applyMessages(input.messages); void broadcast(); }
+   else if (input?.type === 'sdkUpload' && sdkOwner === webview && recorder.state?.phase === 'uploading' && input.clientId === recorder.state.clientId && Number.isFinite(input.progress)) { recorder.uploading(Math.min(100,Math.max(0,input.progress))); }
    else if (input?.type === 'sdkStatus' && sdkOwner === webview) {
     const wasConnected = sdkConnected; sdkConnected = input.connected === true;
     connection = sdkConnected ? 'Connected to Nexconn' : `Nexconn reconnecting${input.code ? ` (code ${input.code})` : ''}…`;
     if (!wasConnected && sdkConnected) { loaded.clear(); scheduleBackground(); }
     void broadcast();
-   } else { queue = queue.then(() => handle(webview, input)).catch(() => undefined); }
+   } else if (['voiceStart','voiceStop','voiceDiscard'].includes(input?.type)) { void handle(webview,input); }
+   else { queue = queue.then(() => handle(webview, input)).catch(() => undefined); }
   }));
  };
  context.subscriptions.push(vscode.window.registerWebviewViewProvider('codejam.workspace', {
@@ -340,7 +387,17 @@ export function activate(context: vscode.ExtensionContext) {
   const first = [...readyViews][0]; if (first) { await handle(first,{type:'selection'}); await vscode.commands.executeCommand('codejam.workspace.focus'); } else { pendingAttachment = captureSelection(); await vscode.commands.executeCommand('codejam.workspace.focus'); }
  }));
  context.subscriptions.push(vscode.commands.registerCommand('codejam.open', () => vscode.commands.executeCommand('codejam.workspace.focus')));
+ context.subscriptions.push(vscode.commands.registerCommand('codejam.selectMicrophone',async () => {
+  try {
+   const unavailable = voiceUnavailable(); if (unavailable) { throw new Error(unavailable); }
+   if (recorder.state) { throw new Error('Finish or discard your recording before changing the microphone.'); }
+   const devices = await recorder.devices();
+   const selected = await vscode.window.showQuickPick([{label:'System default microphone',value:''},...devices.map(d=>({label:d.name,description:d.isDefault?'System default':'',value:d.name}))],{placeHolder:'Microphone for CodeJam voice messages'});
+   if (selected) { await context.globalState.update('codejam.microphone',selected.value); }
+  } catch (error) { await vscode.window.showInformationMessage((error as Error).message); }
+ }));
  context.subscriptions.push(vscode.commands.registerCommand('codejam.resetSession', async () => {
+  await recorder.cancel();
   queue = queue.then(async () => {
    if (sdkOwner) { try { await sdk('disconnect'); } catch { /* View may be closed. */ } }
    await context.secrets.delete(`codejam.session.nexconn.${apiUrl()}`); shared = { rooms: [] }; loaded.clear(); sdkConnected = false; refreshPolicy.reset(); await refresh();
@@ -356,11 +413,13 @@ export function activate(context: vscode.ExtensionContext) {
  context.subscriptions.push(vscode.workspace.onDidChangeWorkspaceFolders(() => { queue = queue.then(() => refresh()); }));
  context.subscriptions.push(vscode.workspace.onDidChangeConfiguration(e => {
   if (e.affectsConfiguration('codejam')) { queue = queue.then(async () => {
+   await recorder.cancel();
    if (sdkOwner) { try { await sdk('disconnect'); } catch { /* Reconnect below. */ } }
    shared = { rooms: [] }; loaded.clear(); sdkConnected = false; refreshPolicy.reset(); await refresh();
   }); }
  }));
  const timer = setInterval(scheduleBackground, 30000);
+ context.subscriptions.push({dispose:()=>{void recorder.dispose();}});
  context.subscriptions.push({ dispose: () => { clearInterval(timer); for (const pending of rpc.values()) { clearTimeout(pending.timer); pending.reject(new Error('CodeJam deactivated.')); } } });
 }
 export function deactivate() {}

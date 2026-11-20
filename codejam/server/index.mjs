@@ -18,6 +18,7 @@ const cleanSource=(source,room)=>{
  if(!source||!text(source.id,200)||!text(source.userId,100)||!room.members.some(m=>m.id===source.userId)){fail(400,'Choose a valid message from this room.');}
  const result={id:source.id,userId:source.userId,author:room.members.find(m=>m.id===source.userId).name,text:String(source.text||'').slice(0,12000),createdAt:source.createdAt||now()};
  if(source.attachment){const a=source.attachment;if(!text(a.path,1000)||/(^[\\/]|^[a-z]:|(^|[\\/])\.\.([\\/]|$))/i.test(a.path)||typeof a.code!=='string'||a.code.length>12000||!Number.isInteger(a.line)||!Number.isInteger(a.endLine)||a.line<1||a.endLine<a.line){fail(400,'Invalid code reference.');}result.attachment={path:a.path,code:a.code,line:a.line,endLine:a.endLine,branch:String(a.branch||''),commit:String(a.commit||''),repository:String(a.repository||room.repositoryIdentity||'')};}
+ if(source.voice){const v=source.voice;let url;try{url=new URL(v.url);}catch{fail(400,'Invalid voice message.');}if(url.protocol!=='https:'||url.username||url.password||v.url.length>4096||!Number.isFinite(v.duration)||v.duration<1||v.duration>60||v.mimeType!=='audio/wav'){fail(400,'Invalid voice message.');}result.voice={url:url.href,duration:v.duration,mimeType:v.mimeType};}
  return result;
 };
 export async function createRoomServer({store=createFirestoreStore(),nexconn=createNexconnService(),auth=createFirebaseAuth(),ai=createAI(),migrate=true,legacyFile=path.join(import.meta.dirname,'.data','nexconn-rooms.json'),allowGuests=process.env.CODEJAM_ALLOW_GUESTS==='true'}={}){

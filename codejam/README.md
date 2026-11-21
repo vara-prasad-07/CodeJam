@@ -35,6 +35,14 @@ Open a reference in your checkout. When your revision differs, inspect the saved
 
 Mention names containing spaces with underscores: `@First_Last`.
 
+## Translate messages privately
+
+Choose **English** (default), **Hindi**, or **Telugu** as your default translation language when signing up with email or Google. Existing accounts start with English. Change the preference from **Your account → Default translation language → Save language**.
+
+Messages remain in their original language. Open a message's **More actions → Translate**, choose one of the three languages (your preference is preselected), then click **Translate**. The result appears below the original, marked **Only you**. Hide it at any time. Translations stay in the requesting view's memory and are cleared when you change room/account/checkout or close the view; they are never posted to the room or included in shared decisions or Agent context. Code attachments and voice-only messages are not translated.
+
+Translation uses Nexconn's installed Chat SDK with automatic source-language detection. Translation service access and language availability must be enabled for your Nexconn application. Provider errors appear privately with a retry action; CodeJam does not substitute Gemini for translation.
+
 ## Ask Agent from the composer
 
 Click the **Agent context** shield icon beside the chat input and tick **Selected code**, **Recent messages**, or **Git diff** in the popover, then type `@agent your question` and press **Enter**. The choices are remembered locally for that account, room and checkout. They apply only to Agent requests; normal messages work as before. All three start disabled for a new scope.

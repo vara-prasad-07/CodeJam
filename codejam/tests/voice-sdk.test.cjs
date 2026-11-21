@@ -14,7 +14,7 @@ test('Nexconn voice bridge uploads once, reports progress and normalizes history
  }}
  const sdk={NCEngine:engine,AreaCode:{SG:'SG'},LogLevel:{ERROR:0},ConnectionStatus:{CONNECTED:1},ConnectionStatusHandler:class{constructor(values){Object.assign(this,values);}},MessageHandler:class{constructor(values){Object.assign(this,values);}},MessageType:{TEXT:'text',HD_VOICE:'voice'},GroupChannel,GroupChannelIdentifier:class{},BaseChannel:{},SendTextMessageParams:class{},ChannelType:{GROUP:'group'},MentionedType:{USERS:1},Helper:{createSendHDVoiceMessageParams:async file=>{voiceFile=file;return {isOk:true,data:{content:{duration:2}}};}}};
  const module={exports:{}};
- vm.runInNewContext(fs.readFileSync(path.join(__dirname,'../out/nexconnClient.js'),'utf8'),{module,exports:module.exports,require:name=>{assert.equal(name,'@nexconn/chat');return sdk;},Uint8Array,File,atob,console,globalThis:{addEventListener:(_type,fn)=>listeners.push(fn)}});
+ vm.runInNewContext(fs.readFileSync(path.join(__dirname,'../out/nexconnClient.js'),'utf8'),{module,exports:module.exports,require:name=>{if(name==='./translation'){return {createTranslator:()=>({install(){},cancel(){}})};}assert.equal(name,'@nexconn/chat');return sdk;},Uint8Array,File,atob,console,globalThis:{addEventListener:(_type,fn)=>listeners.push(fn)}});
  module.exports.startNexconnBridge({postMessage:data=>posts.push(data)});
  const command=(requestId,name,input)=>listeners[0]({data:{type:'sdkCommand',requestId,command:name,input}});
  await command('connect','connect',{appKey:'key',region:'SG',token:'token',userId:'me'});

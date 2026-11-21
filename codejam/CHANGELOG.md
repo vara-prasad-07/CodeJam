@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.0.11
+
+- Add private message translation into English, Hindi and Telugu through Nexconn. Start new accounts in English and remember the language selected when translating.
+- Support older backends without the language-preference endpoint by remembering the preference locally per account.
+- Improve visibility of message actions, emoji choices and sharing controls with stronger contrast, larger buttons and clear focus states.
+
 ## 1.0.10
 
 - Move Agent context permissions into the composer and generate private inline answers with `@agent` + Enter. Remember permissions per account, room and checkout; share answers only through **Share with room**.

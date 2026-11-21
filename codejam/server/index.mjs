@@ -16,6 +16,8 @@ const roomNameKey=name=>String(name).trim().replace(/\s+/g,' ').toLowerCase();
 const roomOwner=room=>room.ownerId||room.members[0]?.id;
 const duplicateRoom=()=>fail(409,'A room with this name already exists. Use a different name or ask its owner to delete the existing room.');
 const now=()=>new Date().toISOString();
+const language=value=>{if(value===undefined){return 'en';}if(!['en','hi','te'].includes(value)){fail(400,'Choose English, Hindi or Telugu.');}return value;};
+const publicUser=user=>({id:user.id,name:user.name,email:user.email||'',isGuest:Boolean(user.isGuest),language:language(user.language)});
 const safeName=name=>String(name||'Developer').trim().slice(0,60);
 const cleanSource=(source,room)=>{
  if(!source||!text(source.id,200)||!text(source.userId,100)||!room.members.some(m=>m.id===source.userId)){fail(400,'Choose a valid message from this room.');}
@@ -36,15 +38,15 @@ export async function createRoomServer({store=createFirestoreStore(),nexconn=cre
   locks.set(key,task);try{return await task;}finally{if(locks.get(key)===task){locks.delete(key);}}
  }
  const migration=await createLegacyMigration({store,filePath:legacyFile,enabled:migrate});
- async function issue(user,scope){const token=randomBytes(32).toString('hex');await store.put('codejam_sessions',hash(token),{...user,...scope,expiresAt:Date.now()+(scope?4*3600000:30*86400000)});return {token,user:{id:user.id,name:user.name,email:user.email||'',isGuest:Boolean(user.isGuest)}};}
+ async function issue(user,scope){const token=randomBytes(32).toString('hex');await store.put('codejam_sessions',hash(token),{...user,...scope,expiresAt:Date.now()+(scope?4*3600000:30*86400000)});return {token,user:publicUser(user)};}
  async function signedIn(identity,legacy){
   const existing=await store.get('codejam_accounts',identity.uid);
-  const user=existing||{id:legacy?.isGuest?legacy.id:'cj'+hash(identity.uid).slice(0,30),name:safeName(identity.name||identity.email?.split('@')[0]),email:identity.email||'',firebaseUid:identity.uid,isGuest:false};
+  const user=existing||{id:legacy?.isGuest?legacy.id:'cj'+hash(identity.uid).slice(0,30),name:safeName(identity.name||identity.email?.split('@')[0]),email:identity.email||'',firebaseUid:identity.uid,isGuest:false,language:'en'};
   const updated={...user,name:safeName(identity.name||user.name),email:identity.email||user.email,isGuest:false};
   await nexconn.session(updated);await store.put('codejam_accounts',identity.uid,updated);return issue(updated);
  }
  const publicRoom=room=>({id:room.id,channelId:room.channelId,name:room.name,ownerId:roomOwner(room),repository:room.repository,repositoryIdentity:room.repositoryIdentity||'',createdAt:room.createdAt,invite:room.invite,inviteExpiresAt:room.inviteExpiresAt,members:room.members,messages:[]});
- async function userFrom(req){const token=req.headers.authorization?.replace(/^Bearer /,'');if(!token||token.length>256){return null;}const session=await store.get('codejam_sessions',hash(token));return session&&session.expiresAt>Date.now()?session:null;}
+ async function userFrom(req,refreshLanguage=false){const token=req.headers.authorization?.replace(/^Bearer /,'');if(!token||token.length>256){return null;}const session=await store.get('codejam_sessions',hash(token));if(!session||session.expiresAt<=Date.now()){return null;}const account=refreshLanguage&&session.firebaseUid?await store.get('codejam_accounts',session.firebaseUid):null;return {...session,language:language(account?.language??session.language)};}
  async function membership(id,user){const room=await store.get('codejam_rooms',id);if(!room?.members.some(m=>m.id===user.id)){fail(404,'Room not found or membership is required.');}if(user.scope==='call'&&user.roomId!==id){fail(403,'This call session belongs to another room.');}return room;}
  const browserConfig=()=>({apiKey:process.env.FIREBASE_API_KEY||process.env.apiKey,authDomain:process.env.FIREBASE_AUTH_DOMAIN||process.env.authDomain,projectId:process.env.FIREBASE_PROJECT_ID||process.env.projectId,appId:process.env.FIREBASE_APP_ID||process.env.appId});
  const callIdentity=user=>({id:'ca'+hash(user.id).slice(0,30),name:user.name});
@@ -85,12 +87,18 @@ export async function createRoomServer({store=createFirestoreStore(),nexconn=cre
   if(req.method==='POST'&&url.pathname==='/calls/claim'){
    const ticket=tickets.get(body.ticket);if(!ticket||ticket.expiresAt<Date.now()){fail(403,'Call link expired. Open the huddle from CodeJam again.');}tickets.delete(body.ticket);const room=await membership(ticket.roomId,ticket.user);const session=await issue(ticket.user,{scope:'call',roomId:room.id});await Promise.all(room.members.filter(m=>m.id!==ticket.user.id).map(m=>nexconn.session(callIdentity(m))));const nc=await nexconn.session(callIdentity(ticket.user));return {...nc,sessionToken:session.token,userId:ticket.user.id,callUserId:callIdentity(ticket.user).id,room:publicRoom(room),callUsers:room.members.map(m=>({...m,callUserId:callIdentity(m).id}))};
   }
-  const user=await userFrom(req);if(!user){fail(401,'Sign in to CodeJam to continue.');}
+  const user=await userFrom(req,url.pathname==='/rooms');if(!user){fail(401,'Sign in to CodeJam to continue.');}
   if(user.scope==='call'&&!/^\/rooms\/[^/]+\/(call(?:\/control)?|presence)$/.test(url.pathname)){fail(403,'This session is restricted to the call.');}
   if(req.method==='POST'&&url.pathname==='/auth/logout'){const token=req.headers.authorization.replace(/^Bearer /,'');await store.remove('codejam_sessions',hash(token));return {ok:true};}
+  if(req.method==='POST'&&url.pathname==='/account/language'){
+   const preferred=language(body.language);
+   if(user.firebaseUid){await mutate('codejam_accounts',user.firebaseUid,account=>({...account,language:preferred}));}
+   const token=req.headers.authorization.replace(/^Bearer /,'');await mutate('codejam_sessions',hash(token),session=>({...session,language:preferred}));
+   return {user:publicUser({...user,language:preferred})};
+  }
   if(req.method==='POST'&&url.pathname==='/chat/session'){return nexconn.session(user);}
   if(req.method==='GET'&&url.pathname==='/rooms'){
-   const rooms=await store.list('codejam_rooms',{field:'memberIds',op:'ARRAY_CONTAINS',value:user.id});return {userId:user.id,user:{id:user.id,name:user.name,email:user.email||'',isGuest:Boolean(user.isGuest)},provider:'nexconn',aiConfigured:ai.configured,rooms:rooms.sort((a,b)=>a.createdAt.localeCompare(b.createdAt)).map(publicRoom)};
+   const rooms=await store.list('codejam_rooms',{field:'memberIds',op:'ARRAY_CONTAINS',value:user.id});return {userId:user.id,user:publicUser(user),provider:'nexconn',aiConfigured:ai.configured,rooms:rooms.sort((a,b)=>a.createdAt.localeCompare(b.createdAt)).map(publicRoom)};
   }
   if(req.method==='POST'&&url.pathname==='/rooms'){
    if(!text(body.name,64)||!text(body.repository,200)){fail(400,'A room name (1–64 characters) and repository are required.');}

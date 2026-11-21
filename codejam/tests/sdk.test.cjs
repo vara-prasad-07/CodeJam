@@ -3,10 +3,11 @@ const assert=require('node:assert/strict');
 const sdk=require('@nexconn/chat');
 const {startNexconnBridge}=require('../out/nexconnClient.js');
 function setup(t){
- const events=new EventTarget(),messages=[],waiters=new Map();let messageHandler,connected=false;
+ const events=new EventTarget(),messages=[],waiters=new Map();let messageHandler,translationHandler,connected=false;
  t.mock.method(globalThis,'addEventListener',events.addEventListener.bind(events));
  t.mock.method(sdk.NCEngine,'initialize',()=>undefined);
  t.mock.method(sdk.NCEngine,'addConnectionStatusHandler',()=>undefined);
+ t.mock.method(sdk.NCEngine,'addTranslateHandler',(_id,handler)=>{translationHandler=handler;});
  t.mock.method(sdk.NCEngine,'addMessageHandler',(_id,handler)=>{messageHandler=handler;});
  t.mock.method(sdk.NCEngine,'connect',async()=>{connected=true;return {isOk:true,code:0,data:{userId:'me'}};});
  t.mock.method(sdk.NCEngine,'getConnectionStatus',()=>connected?sdk.ConnectionStatus.CONNECTED:sdk.ConnectionStatus.DISCONNECTED);
@@ -16,7 +17,7 @@ function setup(t){
  const query=t.mock.method(sdk.BaseChannel,'createMessagesQuery',()=>({hasNext:false,loadNextPage:async()=>({isOk:true,data:{data:[packet()]}})}));
  startNexconnBridge({postMessage(data){messages.push(data);if(data.type==='sdkResult'){waiters.get(data.requestId)?.(data);}}});
  let seq=0;const call=(command,input={})=>new Promise(resolve=>{const requestId=String(++seq);waiters.set(requestId,resolve);events.dispatchEvent(new MessageEvent('message',{data:{type:'sdkCommand',requestId,command,input}}));});
- return {call,send,query,messages,packet,receive:override=>messageHandler._invoker.onMessageReceived({messages:[override||packet()]})};
+ return {call,send,query,messages,packet,translated:results=>translationHandler._invoker.onTranslationCompleted({results}),receive:override=>messageHandler._invoker.onMessageReceived({messages:[override||packet()]})};
 }
 if(!globalThis.addEventListener){globalThis.addEventListener=()=>{};}
 test('real SDK bridge uses GroupChannel send, message handler and cloud history, and caches acknowledged retries',async t=>{
@@ -41,6 +42,43 @@ test('Agent provenance is preserved in shared-message transport and received his
  assert.deepEqual(JSON.parse(h.send.mock.calls[0].arguments[0].content.extra).agent,agent);
  const packet=h.packet();packet.content.extra=JSON.stringify({codejam:1,agent});h.receive(packet);
  assert.deepEqual(h.messages.find(m=>m.type==='sdkMessages').messages[0].agent,agent);
+});
+
+test('private translation uses Nexconn auto detection, matches callbacks by message and language, and never sends chat',async t=>{
+ const h=setup(t);await h.call('connect',{appKey:'public',token:'token',userId:'me',region:'SG'});
+ const translate=t.mock.method(sdk.NCEngine.translateModule,'translateMessages',async()=>({isOk:true,code:0}));
+ const resultPromise=h.call('translate',{id:'original',text:'Hello',language:'te'});
+ await new Promise(r=>setImmediate(r));const params=translate.mock.calls[0].arguments[0];
+ assert.equal(params.list[0].targetLanguage,'te');assert.equal(params.list[0].sourceLanguage,'auto');assert.equal(params.list[0].text,'Hello');
+ h.translated([{identifier:'unrelated',code:0,translateInfo:{targetLanguage:'te',status:2,translatedText:'Ignore'}}]);
+ h.translated([{identifier:'original',code:0,translateInfo:{targetLanguage:'te',status:2,translatedText:'నమస్కారం'}}]);
+ const result=await resultPromise;assert.equal(result.ok,true);assert.equal(result.data.text,'నమస్కారం');assert.equal(h.send.mock.calls.length,0);
+ assert.equal(h.messages.some(m=>m.type==='sdkMessages'),false);
+});
+
+test('translation provider rejection and invalid targets return private errors',async t=>{
+ const h=setup(t);await h.call('connect',{appKey:'public',token:'token',userId:'me',region:'SG'});
+ t.mock.method(sdk.NCEngine.translateModule,'translateMessages',async()=>({isOk:false,code:400}));
+ assert.equal((await h.call('translate',{id:'m',text:'Hello',language:'xx'})).ok,false);
+ const result=await h.call('translate',{id:'m',text:'Hello',language:'hi'});assert.equal(result.ok,false);assert.match(result.error,/translation access/);
+});
+
+test('translation callback failures and disconnects release waiting requests',async t=>{
+ const h=setup(t);await h.call('connect',{appKey:'public',token:'token',userId:'me',region:'SG'});
+ t.mock.method(sdk.NCEngine.translateModule,'translateMessages',async()=>({isOk:true,code:0}));
+ const result=h.call('translate',{id:'m',text:'Hello',language:'en'});await new Promise(r=>setImmediate(r));
+ h.translated([{identifier:'m',code:42}]);assert.equal((await result).ok,false);
+ const waiting=h.call('translate',{id:'m2',text:'Hello',language:'hi'});await new Promise(r=>setImmediate(r));
+ await h.call('disconnect');assert.equal((await waiting).ok,false);
+});
+
+test('translation timeouts and concurrent duplicate requests fail without sending chat',async t=>{
+ const h=setup(t);await h.call('connect',{appKey:'public',token:'token',userId:'me',region:'SG'});
+ t.mock.method(sdk.NCEngine.translateModule,'translateMessages',async()=>({isOk:true,code:0}));
+ const {createTranslator}=require('../out/translation.js');const translator=createTranslator(20);translator.install();
+ const input={id:'timeout-message',text:'Hello',language:'te'};
+ const pending=translator.translate(input);await assert.rejects(translator.translate(input),/already being translated/);
+ await assert.rejects(pending,/timed out/);assert.equal(h.send.mock.calls.length,0);
 });
 
 

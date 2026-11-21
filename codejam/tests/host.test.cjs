@@ -6,7 +6,7 @@ const path=require('node:path');
 const os=require('node:os');
 const {createRequire}=require('node:module');
 
-test('extension shares one SDK connection across views and sends exclusively through the SDK bridge',async t=>{
+for(const legacyLanguageEndpoint of [false,true]) test('extension shares one SDK connection and keeps translation private'+(legacyLanguageEndpoint?' with an older backend':''),async t=>{
  const folder=fs.mkdtempSync(path.join(os.tmpdir(),'codejam-host-'));t.after(()=>fs.rmSync(folder,{recursive:true,force:true}));
  let fakeRecorder;
  class FakeRecorder {
@@ -28,15 +28,16 @@ test('extension shares one SDK connection across views and sends exclusively thr
  const makeView=()=>{
   let listener,disposeListener;const posts=[];
   const webview={options:{},cspSource:'vscode-resource:',asWebviewUri:uri=>'vscode-resource:'+uri.fsPath,onDidReceiveMessage(fn){listener=fn;return disposable();},async postMessage(data){posts.push(data);if(data.type==='sdkCommand'){
-   const result=data.command==='connect'?{userId:'me'}:data.command==='history'?{messages:[],hasMore:false}:data.command==='sendVoice'?{id:'sdk-voice',channelId:'group1',userId:'me',text:'',voice:{url:'https://media.example/voice.wav',duration:2,mimeType:'audio/wav'},createdAt:new Date().toISOString(),clientId:data.input.clientId,replyTo:data.input.replyTo}:data.command==='send'?{id:'sdk-ack',channelId:'group1',userId:'me',text:data.input.text,createdAt:new Date().toISOString(),clientId:data.input.clientId}:{};
+   const result=data.command==='translate'?{text:'????????',language:data.input.language}:data.command==='connect'?{userId:'me'}:data.command==='history'?{messages:[],hasMore:false}:data.command==='sendVoice'?{id:'sdk-voice',channelId:'group1',userId:'me',text:'',voice:{url:'https://media.example/voice.wav',duration:2,mimeType:'audio/wav'},createdAt:new Date().toISOString(),clientId:data.input.clientId,replyTo:data.input.replyTo}:data.command==='send'?{id:'sdk-ack',channelId:'group1',userId:'me',text:data.input.text,createdAt:new Date().toISOString(),clientId:data.input.clientId}:{};
    queueMicrotask(()=>listener({type:'sdkResult',requestId:data.requestId,ok:true,data:result}));
   }return true;}};
   const view={webview,posts,onDidDispose(fn){disposeListener=fn;return disposable();},receive:data=>listener(data),close:()=>disposeListener?.()};views.push(view);return view;
  };
  const vscode={ViewColumn:{One:1},workspace:{registerTextDocumentContentProvider:disposable,workspaceFolders:[{name:'repo',uri:{fsPath:folder}}],getConfiguration:()=>({get:(key,fallback)=>key==='displayName'?'Vara':fallback}),onDidChangeWorkspaceFolders:disposable,onDidChangeConfiguration:disposable},window:{registerWebviewViewProvider(_id,p){provider=p;return disposable();},createWebviewPanel(){return makeView();},showInformationMessage:async()=>undefined},commands:{registerCommand(id,fn){commands.set(id,fn);return disposable();},executeCommand:async()=>undefined},Uri:{joinPath:(root,...parts)=>({fsPath:path.join(root.fsPath,...parts)})}};
- const calls=[];const fakeFetch=async(url,options)=>{
+ let language='en';const calls=[];const fakeFetch=async(url,options)=>{
   const route=new URL(url).pathname;calls.push(route);let data;
   if(route==='/sessions'){data={token:'application-session'};}
+  else if(route==='/account/language'){if(legacyLanguageEndpoint){return {ok:false,status:404,json:async()=>({error:'Endpoint not found.'})};}language=JSON.parse(options.body).language;data={user:{id:'me',name:'Vara',language}};}
   else if(route==='/chat/session'){data={appKey:'public-key',token:'user-nexconn-token',userId:'me',region:'SG'};}
   else if(route==='/rooms'&&options.method==='POST'){room={id:'room1',channelId:'group1',name:'Room',ownerId:'me',repository:'repo',messages:[],members:[{id:'me',name:'Vara'},{id:'other',name:'Teammate'}]};data={room};}
   else if(route.endsWith('/members/remove')){const body=JSON.parse(options.body);assert.equal(body.userId,'other');room={...room,members:room.members.filter(m=>m.id!==body.userId)};data={room:{...room,messages:[]}};}
@@ -45,7 +46,7 @@ test('extension shares one SDK connection across views and sends exclusively thr
   else if(route.endsWith('/chat-membership')){data={ok:true};}
   else if(route.endsWith('/presence')){data={ok:true};}
   else if(route.endsWith('/agent')){const body=JSON.parse(options.body);assert.equal(body.context.instruction,'What is an LLM?');assert.equal(body.context.repository,'');assert.deepEqual(body.context.messages,[]);assert.equal(body.context.code,null);assert.equal(body.context.diff,'');assert.equal(body.context.permissions.code,false);assert.equal(body.context.permissions.messages,false);assert.equal(body.context.permissions.diff,false);data={status:'answer',text:'An LLM is a large language model.',model:'test-model'};}
-  else if(route==='/rooms'){data={userId:'me',rooms:room?[room]:[]};}
+  else if(route==='/rooms'){data={userId:'me',user:{id:'me',name:'Vara',language},rooms:room?[room]:[]};}
   else{throw new Error('Unexpected HTTP route '+route);}
   return {ok:true,json:async()=>data};
  };
@@ -62,6 +63,15 @@ test('extension shares one SDK connection across views and sends exclusively thr
  assert.ok(first.posts.some(p=>p.type==='sdkCommand'&&p.command==='send'));
  assert.ok(!calls.some(route=>route.endsWith('/messages')));
  assert.equal(second.posts.filter(p=>p.type==='state').at(-1).rooms[0].messages[0].id,'sdk-ack');
+ second.receive({type:'translateMessage',roomId:'room1',id:'sdk-ack',language:'te',operation:'private-translation'});
+ await until(()=>second.posts.some(p=>p.type==='result'&&p.operation==='private-translation'));
+ assert.equal(second.posts.find(p=>p.type==='translation'&&p.operation==='private-translation').text,'????????');
+ assert.equal(first.posts.some(p=>p.type==='translation'),false,'translations are only delivered to the requesting view');
+ assert.equal(language,legacyLanguageEndpoint?'en':'te');assert.equal(second.posts.filter(p=>p.type==='state').at(-1).user.language,'te');
+ assert.equal(calls.filter(route=>route==='/account/language').length,1);
+ assert.equal(second.posts.find(p=>p.type==='result'&&p.operation==='private-translation').ok,true);
+ if(legacyLanguageEndpoint){assert.equal(stores.global.get('codejam.translation.language.'+JSON.stringify(['https://codejam-vdmp.onrender.com','me'])),'te');}
+ assert.equal(second.posts.filter(p=>p.type==='state').at(-1).rooms[0].messages[0].text,'Through Nexconn');
  second.receive({type:'askAgent',roomId:'room1',instruction:'What is an LLM?',permissions:{code:false,messages:false,diff:false},operation:'agent-question'});
  await until(()=>second.posts.some(p=>p.type==='agentResponse'&&p.operation==='agent-question'));
  const answer=second.posts.find(p=>p.type==='agentResponse'&&p.operation==='agent-question');assert.equal(answer.status,'answer');assert.equal(answer.shared,false);
@@ -86,7 +96,7 @@ test('extension shares one SDK connection across views and sends exclusively thr
  let snapshot=second.posts.filter(p=>p.type==='state').at(-1);assert.equal(snapshot.rooms[0].members.length,1);assert.equal(snapshot.rooms[0].messages.length,2);
  second.receive({type:'leaveRoom',roomId:'room1',operation:'leave-room'});
  await until(()=>second.posts.some(p=>p.type==='result'&&p.operation==='leave-room'));
- snapshot=second.posts.filter(p=>p.type==='state').at(-1);assert.equal(snapshot.rooms.length,0);assert.equal(snapshot.active,undefined);
+ snapshot=second.posts.filter(p=>p.type==='state').at(-1);assert.equal(snapshot.rooms.length,0);assert.equal(snapshot.active,undefined);assert.equal(snapshot.user.language,'te','preference survives room refresh with an older backend');
  second.receive({type:'createRoom',name:'Room',operation:'recreate'});await until(()=>second.posts.some(p=>p.type==='result'&&p.operation==='recreate'));
  second.receive({type:'deleteRoom',roomId:'room1',operation:'delete-room'});await until(()=>second.posts.some(p=>p.type==='result'&&p.operation==='delete-room'));
  assert.equal(second.posts.filter(p=>p.type==='state').at(-1).rooms.length,0);

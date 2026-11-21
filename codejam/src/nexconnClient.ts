@@ -1,3 +1,4 @@
+import { createTranslator } from './translation';
 import { NCEngine, AreaCode, LogLevel, ConnectionStatus, ConnectionStatusHandler, MessageHandler, MessageType, Message, GroupChannel, GroupChannelIdentifier, BaseChannel, SendTextMessageParams, MessagesQuery, ChannelType, MentionedType, Helper } from '@nexconn/chat';
 import type { Attachment } from './model';
 
@@ -7,6 +8,7 @@ interface SendInput { channelId: string; text: string; attachment?: Attachment; 
 interface SendVoiceInput { channelId: string; base64: string; replyTo?: string; discussionId?: string; clientId: string }
 export function startNexconnBridge(host: Host) {
  let initializedKey = '', connectedUser = '';
+ const translator=createTranslator();
  const queries = new Map<string, MessagesQuery>();
  const sent = new Map<string, Promise<unknown>>();
  const normalize = (m: Message) => {
@@ -20,7 +22,7 @@ export function startNexconnBridge(host: Host) {
   if (initializedKey && initializedKey !== session.appKey) { throw new Error('The Nexconn application changed. Reload this VS Code window.'); }
   if (initializedKey) { return; }
   NCEngine.initialize({ appKey: session.appKey, areaCode: AreaCode[session.region], logLevel: LogLevel.ERROR });
-  initializedKey = session.appKey;
+  initializedKey = session.appKey;translator.install();
   NCEngine.addConnectionStatusHandler('codejam', new ConnectionStatusHandler({ onConnectionStatusChanged({status, code}) {
    host.postMessage({ type: 'sdkStatus', connected: status === ConnectionStatus.CONNECTED, status, code });
   } }));
@@ -31,7 +33,7 @@ export function startNexconnBridge(host: Host) {
  async function connect(session: Session) {
   initialize(session);
   if (connectedUser === session.userId && NCEngine.getConnectionStatus() === ConnectionStatus.CONNECTED) { return { userId: connectedUser }; }
-  if (connectedUser) { await NCEngine.disconnect(); }
+  if (connectedUser) { translator.cancel();await NCEngine.disconnect(); }
   const result = await NCEngine.connect({ token: session.token });
   if (!result.isOk || !result.data) { throw new Error(`Nexconn SDK connection failed (code ${result.code}). Check Chat access and region; retry to obtain a fresh token.`); }
   connectedUser = result.data.userId;
@@ -84,8 +86,9 @@ export function startNexconnBridge(host: Host) {
    if (data.command === 'connect') { result = await connect(data.input); }
    else if (data.command === 'history') { result = await history(data.input.channelId, data.input.older); }
    else if (data.command === 'send') { result = await send(data.input); }
+   else if (data.command === 'translate') { if(!connectedUser || NCEngine.getConnectionStatus() !== ConnectionStatus.CONNECTED){throw new Error('Reconnect before translating a message.');}result = await translator.translate(data.input); }
    else if (data.command === 'sendVoice') { result = await sendVoice(data.input); }
-   else if (data.command === 'disconnect') { await NCEngine.disconnect(); connectedUser = ''; queries.clear(); sent.clear(); }
+   else if (data.command === 'disconnect') { translator.cancel(); await NCEngine.disconnect(); connectedUser = ''; queries.clear(); sent.clear(); }
    else { throw new Error('Unsupported SDK command.'); }
    host.postMessage({ type: 'sdkResult', requestId: data.requestId, ok: true, data: result });
   } catch (error) {

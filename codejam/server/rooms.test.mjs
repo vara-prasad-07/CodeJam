@@ -170,3 +170,29 @@ test('Agent requests require membership and keep failed generations out of room 
  const stored=await h.store.get('codejam_rooms',room.id);assert.equal(stored.messages,undefined);
  assert.deepEqual((await h.api('/rooms',undefined,a.token)).data.rooms[0].messages,[]);
 });
+
+test('language preference is validated, defaults to English, is preserved on login and editable across sessions',async t=>{
+ const h=await setup(t),payload={mode:'signup',email:'language@example.test',password:'example-password',name:'Language',language:'te'};
+ const signup=await h.api('/auth/password',payload);assert.equal(signup.status,200);assert.equal(signup.data.user.language,'en');
+ assert.equal((await h.api('/account/language',{language:'te'},signup.data.token)).data.user.language,'te');
+ const second=(await h.api('/auth/password',{...payload,mode:'login',language:'en'})).data;
+ assert.equal(second.user.language,'te');
+ assert.equal((await h.api('/account/language',{language:'fr'},signup.data.token)).status,400);
+ const changed=await h.api('/account/language',{language:'hi'},signup.data.token);assert.equal(changed.data.user.language,'hi');
+ assert.equal((await h.api('/rooms',undefined,second.token)).data.user.language,'hi');
+ await h.restart();assert.equal((await h.api('/rooms',undefined,signup.data.token)).data.user.language,'hi');
+ assert.equal((await h.api('/auth/password',{...payload,email:'new-language@example.test',language:'xx'})).data.user.language,'en');
+ assert.equal((await h.login('legacy-language@example.test','Legacy')).user.language,'en');
+});
+
+test('Google signup defaults to English without overriding an existing preference',async t=>{
+ const h=await setup(t);
+ const signIn=async language=>{
+  const start=(await h.api('/auth/browser/start',{language})).data;
+  assert.equal((await h.api('/auth/browser/complete',{ticket:start.ticket,idToken:'valid-google-token'})).status,200);
+  return (await h.api('/auth/browser/claim',{id:start.id,proof:start.proof})).data;
+ };
+ const first=await signIn('hi');assert.equal(first.user.language,'en');
+ await h.api('/account/language',{language:'hi'},first.token);
+ assert.equal((await signIn('en')).user.language,'hi');
+});

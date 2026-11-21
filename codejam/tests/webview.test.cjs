@@ -66,6 +66,38 @@ function checked(h,key){openContext(h);return h.q('#ai-'+key).checked;}
 function grant(h,key,value=true){openContext(h);const el=h.q('#ai-'+key);el.checked=value;el.dispatchEvent(new h.w.Event('change',{bubbles:true}));}
 function answer(h,request,extra={}){h.emit({type:'agentResponse',operation:request.operation,roomId:request.roomId,status:'answer',text:'A private answer',answerId:request.operation,model:'test-model',shared:false,...extra});}
 
+test('email and Google authentication have no language selector or language override',t=>{
+ const h=setup(t);h.emit({...h.state,authenticated:false});assert.equal(h.q('#auth-language'),null);h.click('[data-auth="signup"]');
+ assert.equal(h.q('#auth-language'),null);
+ h.input('#auth-password','example-password');h.submit('#auth-form');assert.equal(h.requests.at(-1).language,undefined);h.ack(h.requests.at(-1),false);
+ h.click('[data-action="googleSignIn"]');assert.equal(h.requests.at(-1).language,undefined);
+});
+
+test('Translate offers three languages, preselects the account preference and renders only a private result',t=>{
+ const h=setup(t),r=collaboration(h);h.emit({...h.state,active:r.id,rooms:[r],user:{language:'hi'}});
+ h.click('[data-action="messageMenu"]');h.click('[data-action="translateMenu"]');
+ assert.equal(h.q('#translation-language').value,'hi');assert.equal(h.w.document.querySelectorAll('#translation-language option').length,3);
+ h.q('#translation-language').value='te';h.q('#translation-language').dispatchEvent(new h.w.Event('change',{bubbles:true}));h.click('[data-action="translateMessage"]');
+ const request=h.requests.at(-1);assert.equal(request.type,'translateMessage');assert.equal(request.roomId,r.id);assert.equal(request.id,'root');assert.equal(request.language,'te');
+ h.emit({type:'translation',operation:request.operation,roomId:r.id,id:'root',language:'te',text:'నమస్కారం <img src=x>'});h.ack(request);
+ assert.match(h.q('.message-translation').textContent,/Only you/);assert.equal(h.q('.message-translation img'),null);assert.match(h.q('.message').textContent,/Review agent context/);
+ assert.equal(r.messages[0].text,'Review agent context');assert.equal(JSON.stringify(h.saved()).includes('నమస్కారం'),false);assert.equal(h.requests.some(r=>r.type==='send'),false);
+ h.click('[data-action="hideTranslation"]');assert.equal(h.q('.message-translation'),null);
+ h.emit({...h.state,active:r.id,rooms:[r],user:{language:'te'}});h.click('[data-action="messageMenu"]');h.click('[data-action="translateMenu"]');assert.equal(h.q('#translation-language').value,'te');
+});
+
+test('failed translations remain retryable and late results from another room are ignored',t=>{
+ const h=setup(t),r=collaboration(h);h.click('[data-action="messageMenu"]');h.click('[data-action="translateMenu"]');h.click('[data-action="translateMessage"]');
+ const request=h.requests.at(-1);h.emit({type:'notice',text:'Translation unavailable'});h.ack(request,false);assert.match(h.q('.translation-error').textContent,/unavailable/);
+ h.emit({...h.state,active:'other',rooms:[{...r,id:'other'}]});h.emit({type:'translation',operation:request.operation,roomId:r.id,id:'root',language:'en',text:'Private old translation'});
+ assert.equal(h.q('.message-translation'),null);
+});
+
+test('account language can be changed without translating or sending a message',t=>{
+ const h=setup(t);collaboration(h);h.click('[data-action="account"]');h.q('#account-language').value='hi';h.q('#account-language').dispatchEvent(new h.w.Event('change',{bubbles:true}));h.click('[data-action="setLanguage"]');
+ assert.equal(h.requests.at(-1).type,'setLanguage');assert.equal(h.requests.at(-1).language,'hi');assert.equal(h.requests.some(r=>r.type==='translateMessage'||r.type==='send'),false);
+});
+
 test('context icon opens three independently selectable options and preserves draft and keyboard focus',t=>{
  const h=setup(t);collaboration(h);h.input('#compose','Keep this draft');
  assert.equal(h.q('#agent-context-popover'),null);assert.equal(h.q('#ai-code'),null);

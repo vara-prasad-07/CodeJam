@@ -7,6 +7,7 @@ import { createMessage, createRoom, LocalState, Room, ChatMessage } from './mode
 import { RefreshPolicy } from './refreshPolicy';
 import { AgentController } from './agentHost';
 import { VoiceRecorder } from './voice';
+const validLanguage=(value:unknown):value is string=>typeof value==='string'&&['en','hi','te'].includes(value);
 
 export function activate(context: vscode.ExtensionContext) {
  const views = new Set<vscode.Webview>();
@@ -20,7 +21,7 @@ export function activate(context: vscode.ExtensionContext) {
  let queue = Promise.resolve(), sdkOwner: vscode.Webview | undefined, sdkConnected = false;
  const rpc = new Map<string, { owner: vscode.Webview; resolve(value: any): void; reject(error: Error): void; timer: ReturnType<typeof setTimeout> }>();
  const loaded = new Set<string>();
- let account: {id:string; name:string; email?:string; isGuest?:boolean} | undefined, needsAuth = false, aiConfigured = false;
+ let account: {id:string; name:string; email?:string; isGuest?:boolean; language?:string} | undefined, needsAuth = false, aiConfigured = false;
  let pendingAttachment: unknown;
  let voiceOwner: vscode.Webview | undefined;
  const recorder = new VoiceRecorder(context.extensionUri.fsPath,(state,audioBase64,error) => {
@@ -35,7 +36,9 @@ export function activate(context: vscode.ExtensionContext) {
  const apiUrl = () => config().get<string>('apiUrl', 'https://codejam-vdmp.onrender.com').trim().replace(/\/$/, '');
  const browserUrl = () => { const url = new URL(apiUrl()); if (url.hostname === '127.0.0.1') { url.hostname = 'localhost'; } return url.origin; };
  const name = () => config().get<string>('displayName', '').trim() || 'Developer';
- const snapshot = () => ({ type: 'state', ...shared, repo, mode: 'nexconn', connection, connected: sdkConnected, updatesPaused: !refreshPolicy.canPoll, userId: serverUserId, displayName: account?.name || name(), user: account, authenticated: Boolean(account) && !needsAuth, aiConfigured, linked: linked(), voiceSupported:!voiceUnavailable(), voiceUnavailable:voiceUnavailable() });
+ const languageKey = () => 'codejam.translation.language.' + JSON.stringify([apiUrl(),account?.id || serverUserId]);
+ const accountLanguage = () => context.globalState.get<string>(languageKey()) || account?.language || 'en';
+ const snapshot = () => ({ type: 'state', ...shared, repo, mode: 'nexconn', connection, connected: sdkConnected, updatesPaused: !refreshPolicy.canPoll, userId: serverUserId, displayName: account?.name || name(), user: account ? {...account,language:accountLanguage()} : undefined, authenticated: Boolean(account) && !needsAuth, aiConfigured, linked: linked(), voiceSupported:!voiceUnavailable(), voiceUnavailable:voiceUnavailable() });
  const broadcast = async () => {
   if (recorder.state && recorder.state.roomId !== shared.active) { await recorder.cancel(); }
   await Promise.all([...views].map(v => v.postMessage(snapshot())));
@@ -68,6 +71,18 @@ export function activate(context: vscode.ExtensionContext) {
   if (!token && !route.startsWith('/auth/')) { needsAuth = true; throw new Error('Sign in with email/password or Google to continue.'); }
 
   return perform(route, body, token);
+ }
+ async function saveLanguage(language: string) {
+  const key=languageKey();
+  try {
+   const result=await request('/account/language',{language});account=result.user;
+   await context.globalState.update(key,undefined);
+  } catch(error) {
+   // Older servers lack this preference route; Nexconn translation still works.
+   if((error as {status?:number}).status!==404){throw error;}
+   await context.globalState.update(key,language);
+  }
+  await broadcast();
  }
  function sdk(command: string, input: unknown = {}): Promise<any> {
   const owner = sdkOwner;
@@ -306,6 +321,21 @@ export function activate(context: vscode.ExtensionContext) {
      applyMessages([result]);
     }
     await broadcast();
+   }
+   else if (data.type === 'setLanguage') {
+    if(!validLanguage(data.language)){throw new Error('Choose English, Hindi or Telugu.');}
+    await saveLanguage(data.language);
+   }
+   else if (data.type === 'translateMessage') {
+    const room=shared.rooms.find(r=>r.id===data.roomId),userId=serverUserId;
+    if(!room||room.id!==shared.active||!validLanguage(data.language)){throw new Error('Choose a message and English, Hindi or Telugu.');}
+    const message=[...room.messages,...(room.discussions||[]).map(d=>d.source),...(room.pins||[]).map(p=>p.source)].find(m=>m.id===data.id);
+    if(!message?.text?.trim()){throw new Error('Only messages containing text can be translated.');}
+    await request('/rooms/'+room.id+'/chat-membership',{});
+    if(accountLanguage()!==data.language){await saveLanguage(data.language);}
+    await ensureChat();
+    const result=await sdk('translate',{id:message.id,text:message.text,language:data.language});
+    if(shared.active===room.id&&serverUserId===userId){await webview.postMessage({type:'translation',operation,roomId:room.id,id:message.id,language:data.language,text:result.text});}
    }
    else if (data.type === 'signIn') {
     const result = await request('/auth/password', {mode:data.mode,email:data.email,password:data.password,name:data.name || name()});

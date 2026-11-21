@@ -37,7 +37,7 @@ Mention names containing spaces with underscores: `@First_Last`.
 
 ## Ask Agent from the composer
 
-Tick **Selected code**, **Recent messages**, or **Git diff** beside the chat input, then type `@agent your question` and press **Enter**. The choices are remembered locally for that account, room and checkout. They apply only to Agent requests; normal messages work as before. All three start disabled for a new scope.
+Click the **Agent context** shield icon beside the chat input and tick **Selected code**, **Recent messages**, or **Git diff** in the popover, then type `@agent your question` and press **Enter**. The choices are remembered locally for that account, room and checkout. They apply only to Agent requests; normal messages work as before. All three start disabled for a new scope.
 
 Agent captures enabled sources when you submit: an attached/shared excerpt or current editor selection, up to 20 recent room/discussion messages, and staged/unstaged tracked Git changes. Asking about a message preserves that reference without automatically enabling access. Disabled sources are excluded both locally and on the backend. Secret-file exclusions and credential checks still apply.
 

@@ -61,8 +61,25 @@ function collaboration(h){
  return room;
 }
 
-function grant(h,key,value=true){const el=h.q('#ai-'+key);el.checked=value;el.dispatchEvent(new h.w.Event('change',{bubbles:true}));}
+function openContext(h){if(!h.q('#agent-context-popover')){h.click('[data-action="agentContext"]');}}
+function checked(h,key){openContext(h);return h.q('#ai-'+key).checked;}
+function grant(h,key,value=true){openContext(h);const el=h.q('#ai-'+key);el.checked=value;el.dispatchEvent(new h.w.Event('change',{bubbles:true}));}
 function answer(h,request,extra={}){h.emit({type:'agentResponse',operation:request.operation,roomId:request.roomId,status:'answer',text:'A private answer',answerId:request.operation,model:'test-model',shared:false,...extra});}
+
+test('context icon opens three independently selectable options and preserves draft and keyboard focus',t=>{
+ const h=setup(t);collaboration(h);h.input('#compose','Keep this draft');
+ assert.equal(h.q('#agent-context-popover'),null);assert.equal(h.q('#ai-code'),null);
+ openContext(h);assert.equal(h.q('[data-action="agentContext"]').getAttribute('aria-expanded'),'true');
+ assert.equal(h.w.document.querySelectorAll('#agent-context-popover input[type="checkbox"]').length,3);
+ grant(h,'code');grant(h,'messages');assert.equal(checked(h,'code'),true);assert.equal(checked(h,'messages'),true);assert.equal(checked(h,'diff'),false);
+ assert.equal(h.w.document.activeElement.id,'ai-code');
+ h.q('#ai-messages').focus();h.q('#ai-messages').dispatchEvent(new h.w.KeyboardEvent('keydown',{key:'Escape',bubbles:true,cancelable:true}));
+ assert.equal(h.q('#agent-context-popover'),null);assert.equal(h.w.document.activeElement.dataset.action,'agentContext');
+ assert.equal(h.q('#compose').value,'Keep this draft');assert.match(h.q('[data-action="agentContext"]').getAttribute('aria-label'),/2 enabled/);
+ openContext(h);assert.equal(checked(h,'code'),true);h.q('#compose').focus();assert.equal(h.q('#agent-context-popover'),null);
+ openContext(h);h.q('#compose').click();assert.equal(h.q('#agent-context-popover'),null);
+ openContext(h);h.click('[data-action="closeAgentContext"]');assert.equal(h.q('#agent-context-popover'),null);
+});
 
 test('@agent + Enter submits directly with default-deny permissions and no preview or public message',t=>{
  const h=setup(t);collaboration(h);h.input('#compose','@agent What is a vision model?');
@@ -86,12 +103,12 @@ test('permission errors remain private, retain the question and retry with the u
 });
 
 test('context grants survive rerenders but are scoped to account, room and checkout',t=>{
- const h=setup(t),r=collaboration(h);grant(h,'messages');h.emit({...h.state,active:r.id,rooms:[r],connection:'Updated'});assert.equal(h.q('#ai-messages').checked,true);
+ const h=setup(t),r=collaboration(h);grant(h,'messages');h.emit({...h.state,active:r.id,rooms:[r],connection:'Updated'});assert.equal(checked(h,'messages'),true);
  assert.ok(h.saved().aiGrants);
- h.emit({...h.state,active:'other',rooms:[{...r,id:'other'}]});assert.equal(h.q('#ai-messages').checked,false);
- h.emit({...h.state,active:r.id,rooms:[r]});assert.equal(h.q('#ai-messages').checked,true);
- h.emit({...h.state,userId:'different-account',active:r.id,rooms:[r]});assert.equal(h.q('#ai-messages').checked,false);
- h.emit({...h.state,repo:{...h.state.repo,root:'C:/another'},active:r.id,rooms:[r]});assert.equal(h.q('#ai-messages').checked,false);
+ h.emit({...h.state,active:'other',rooms:[{...r,id:'other'}]});assert.equal(checked(h,'messages'),false);
+ h.emit({...h.state,active:r.id,rooms:[r]});assert.equal(checked(h,'messages'),true);
+ h.emit({...h.state,userId:'different-account',active:r.id,rooms:[r]});assert.equal(checked(h,'messages'),false);
+ h.emit({...h.state,repo:{...h.state.repo,root:'C:/another'},active:r.id,rooms:[r]});assert.equal(checked(h,'messages'),false);
 });
 
 test('revoking permissions cancels pending generation and ignores its late response',t=>{
@@ -116,7 +133,7 @@ test('duplicate Enter is ignored while thinking and normal chat can still send',
 test('message-specific Agent requests preserve their source without enabling permissions or sending unrelated attachments',t=>{
  const h=setup(t);collaboration(h);h.emit({type:'selection',attachment:{path:'unrelated.ts',code:'private code',line:1}});
  h.click('[data-action="messageMenu"]');h.click('.modal [data-action="agent"]');
- assert.equal(h.q('.modal'),null);assert.equal(h.q('#ai-messages').checked,false);grant(h,'messages');h.submit('#message-form');
+ assert.equal(h.q('.modal'),null);assert.equal(checked(h,'messages'),false);grant(h,'messages');h.submit('#message-form');
  const request=h.requests.at(-1);assert.equal(request.sourceId,'root');assert.equal(request.attachment,null);assert.equal(request.permissions.messages,true);
 });
 

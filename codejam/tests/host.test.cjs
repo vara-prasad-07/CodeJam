@@ -29,7 +29,7 @@ for(const legacyLanguageEndpoint of [false,true]) test('extension shares one SDK
   let listener,disposeListener;const posts=[];
   const webview={options:{},cspSource:'vscode-resource:',asWebviewUri:uri=>'vscode-resource:'+uri.fsPath,onDidReceiveMessage(fn){listener=fn;return disposable();},async postMessage(data){posts.push(data);if(data.type==='sdkCommand'){
    const result=data.command==='translate'?{text:'????????',language:data.input.language}:data.command==='connect'?{userId:'me'}:data.command==='history'?{messages:[],hasMore:false}:data.command==='sendVoice'?{id:'sdk-voice',channelId:'group1',userId:'me',text:'',voice:{url:'https://media.example/voice.wav',duration:2,mimeType:'audio/wav'},createdAt:new Date().toISOString(),clientId:data.input.clientId,replyTo:data.input.replyTo}:data.command==='send'?{id:'sdk-ack',channelId:'group1',userId:'me',text:data.input.text,createdAt:new Date().toISOString(),clientId:data.input.clientId}:{};
-   queueMicrotask(()=>listener({type:'sdkResult',requestId:data.requestId,ok:true,data:result}));
+   queueMicrotask(()=>{if(data.command==='connect'){listener({type:'sdkStatus',connected:true});}listener({type:'sdkResult',requestId:data.requestId,ok:true,data:result});});
   }return true;}};
   const view={webview,posts,onDidDispose(fn){disposeListener=fn;return disposable();},receive:data=>listener(data),close:()=>disposeListener?.()};views.push(view);return view;
  };
@@ -61,6 +61,10 @@ for(const legacyLanguageEndpoint of [false,true]) test('extension shares one SDK
  module.exports.activate(context);t.after(()=>{for(const item of context.subscriptions){item.dispose();}});
  const until=async predicate=>{const deadline=Date.now()+4000;while(!predicate()){if(Date.now()>deadline){throw new Error('Timed out waiting for extension bridge');}await new Promise(r=>setTimeout(r,10));}};
  const first=makeView();provider.resolveWebviewView(first);first.receive({type:'ready'});await until(()=>first.posts.some(p=>p.type==='state'&&p.connected));
+ assert.ok(first.posts.some(p=>p.type==='state'&&p.connected&&p.startup==='connecting'),'SDK status must not finish startup before refresh completes');
+ await until(()=>first.posts.some(p=>p.type==='state'&&p.startup==='ready'));
+ assert.match(first.webview.html,/media-src vscode-resource: https: blob:/);
+ for(const asset of ['startup.js','codejam-intro.mp4','codejam-intro.webm','codejam-intro-poster.png']){assert.ok(first.webview.html.includes(asset));}
  commands.get('codejam.openPanel')();const second=views.at(-1);second.receive({type:'ready'});await until(()=>second.posts.some(p=>p.type==='state'&&p.connected));
  assert.equal(views.flatMap(v=>v.posts).filter(p=>p.type==='sdkCommand'&&p.command==='connect').length,1);
  assert.ok(views.flatMap(v=>v.posts).filter(p=>p.type==='state').every(p=>!JSON.stringify(p).includes('user-nexconn-token')));

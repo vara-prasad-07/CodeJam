@@ -1,7 +1,8 @@
 ﻿import { randomUUID } from 'node:crypto';
 import type { Repository } from './repository';
 import type { VoiceAttachment } from './voice';
-export interface Attachment { path: string; line: number; endLine: number; code: string; branch: string; commit: string; repository?: string }
+import { referencePath } from './codeReference';
+export interface Attachment { path: string; line: number; endLine: number; code: string; branch: string; commit: string; repository?: string; symbol?: string }
 export interface ChatMessage { id: string; author: string; userId: string; text: string; createdAt: string; attachment?: Attachment; voice?: VoiceAttachment; replyTo?: string; clientId?: string; discussionId?: string; mentions?: string[]; reviewedDraft?: boolean; agent?: {question:string; model:string} }
 export interface Room { id: string; ownerId?: string; channelId?: string; name: string; repository: string; createdAt: string; messages: ChatMessage[]; members: { id: string; name: string }[]; invite?: string; hasMore?: boolean; repositoryIdentity?: string; inviteExpiresAt?: number; pins?: Decision[]; discussions?: Discussion[]; reactions?: Reaction[]; presence?: Presence[]; call?: CallState | null }
 export interface Decision {
@@ -27,8 +28,8 @@ export function createMessage(input: Record<string, unknown>, user: { id: string
  let attachment: Attachment | undefined;
  if (input.attachment) {
   const a = input.attachment as Attachment;
-  if (typeof a.path !== 'string' || /(^[\\/]|^[a-z]:|(^|[\\/])\.\.([\\/]|$))/i.test(a.path) || typeof a.code !== 'string' || a.code.length > 12000 || !Number.isInteger(a.line) || !Number.isInteger(a.endLine) || a.line < 1 || a.endLine < a.line || typeof a.branch !== 'string' || typeof a.commit !== 'string') { throw new Error('Invalid code attachment.'); }
-  attachment = { path: a.path, code: a.code, line: a.line, endLine: a.endLine, branch: a.branch, commit: a.commit, repository: typeof a.repository === 'string' ? a.repository.slice(0, 500) : undefined };
+  if (typeof a.code !== 'string' || a.code.length > 12000 || !Number.isSafeInteger(a.line) || !Number.isSafeInteger(a.endLine) || a.line < 1 || a.endLine < a.line || a.endLine > 10000000 || typeof a.branch !== 'string' || typeof a.commit !== 'string') { throw new Error('Invalid code attachment.'); }
+  attachment = { path: referencePath(a.path), code: a.code, line: a.line, endLine: a.endLine, branch: a.branch.slice(0,200), commit: a.commit.slice(0,100), repository: typeof a.repository === 'string' ? a.repository.slice(0, 500) : undefined, ...(typeof a.symbol === 'string' && a.symbol.trim() ? {symbol:a.symbol.slice(0,200)} : {}) };
  }
  let voice: VoiceAttachment | undefined;
  if (input.voice) {

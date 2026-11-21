@@ -10,6 +10,10 @@
 !THIRD_PARTY_NOTICES.md
 !dist/extension.js
 !media/app.js
+!media/startup.js
+!media/codejam-intro.mp4
+!media/codejam-intro.webm
+!media/codejam-intro-poster.png
 !media/style.css
 !media/nexconn.js
 !media/codejam.svg

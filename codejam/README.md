@@ -23,7 +23,11 @@ Room names must be unique, ignoring case and extra spaces. In **Team**, the room
 
 Click the project name beside CodeJam for your Git branch, latest commit, and working-tree state. Select code in the editor and choose **Share Selection with Team** to send a reference with relative path, line range, branch, revision and selected excerpt. The message composer starts at one line, grows as you type, and sends with **Enter**. Use **Shift + Enter** for a new line.
 
-Open a reference in your checkout. When your revision differs, inspect the saved excerpt and working-copy diff. Opening a reference does not execute snippets or edit files.
+Each room remembers **your local project folder**, separately for your account and backend. A unique matching Git remote links automatically. For forks, different remotes, non-Git folders, or multiple matching checkouts, choose **Link project folder** and select your local copy. You can change it from the project details. Your teammates' absolute file paths are never used to open code on your computer.
+
+Shared code includes its project-relative filename, original line range, branch, commit reference and selected text; a function or method name is included when your language extension provides it. **Open in editor** searches that relative file for a unique exact excerpt, including unsaved editor changes. It finds moved lines and accepts Windows/Unix line endings without requiring the same commit. When a language provider is available, named references are also checked against their enclosing function.
+
+Missing, renamed, changed, unreadable, ambiguous or unsafe files open the original **read-only shared snapshot** instead. The same fallback works with no project open or no checkout linked. Link the right folder and retry to open a local copy. In a discussion or decision detail, **View shared snapshot** always opens the saved excerpt; **Compare with local file** explicitly compares the excerpt with the full local file when available. Files larger than 5 MB use the snapshot. Opening code never checks out a branch, downloads a repository, executes snippets or edits files.
 
 ## Turn conversations into decisions
 

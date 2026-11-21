@@ -47,6 +47,21 @@ test('discussions, decisions, reactions and presence persist, are scoped to memb
  const bad={...source,attachment:{...source.attachment,path:'../outside'}};assert.equal((await h.api(`/rooms/${room.id}/pins`,{source:bad,title:'Bad'},a.token)).status,400);
  const renewed=(await h.api(`/rooms/${room.id}/invite`,{},a.token)).data.room;assert.notEqual(renewed.invite,room.invite);assert.equal((await h.api('/rooms/join',{invite:room.invite},b.token)).status,404);
 });
+
+test('saved code references preserve portable filenames and function metadata and reject unsafe paths',async t=>{
+ const h=await setup(t),a=await h.login('reference@example.test','Author');
+ const room=(await h.api('/rooms',{name:'Portable references',repository:'repo'},a.token)).data.room;
+ const source={id:'shared-code',userId:a.user.id,text:'Review this',attachment:{path:'src\\utils.ts',line:3,endLine:5,code:'function greet() {\n return "hello";\n}',branch:'feature',commit:'abc123',symbol:'greet'}};
+ const saved=(await h.api(`/rooms/${room.id}/discussions`,{title:'Portable function',source},a.token));assert.equal(saved.status,200);
+ assert.equal(saved.data.discussion.source.attachment.path,'src/utils.ts');assert.equal(saved.data.discussion.source.attachment.symbol,'greet');
+ await h.api(`/rooms/${room.id}/pins`,{title:'Keep this',source},a.token);await h.restart();
+ const details=(await h.api(`/rooms/${room.id}/details`,undefined,a.token)).data;
+ assert.equal(details.pins[0].source.attachment.symbol,'greet');assert.equal(details.discussions[0].source.attachment.code,source.attachment.code);
+ for(const filename of ['/etc/passwd','C:\\author\\utils.ts','../utils.ts','src/../utils.ts','src/utils.ts:secret','file:///utils.ts','src/\0bad','src//utils.ts']){
+  const bad={...source,attachment:{...source.attachment,path:filename}};
+  assert.equal((await h.api(`/rooms/${room.id}/pins`,{title:'Unsafe',source:bad},a.token)).status,400,filename);
+ }
+});
 test('browser login and call tickets are one-time, expire by scope, and never authorize unrelated rooms',async t=>{
  const h=await setup(t),a=await h.login('vara@example.test','Vara');const room=(await h.api('/rooms',{name:'Room',repository:'repo'},a.token)).data.room;
  const ticket=(await h.api(`/rooms/${room.id}/call-ticket`,{},a.token)).data.ticket;

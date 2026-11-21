@@ -66,6 +66,33 @@ function checked(h,key){openContext(h);return h.q('#ai-'+key).checked;}
 function grant(h,key,value=true){openContext(h);const el=h.q('#ai-'+key);el.checked=value;el.dispatchEvent(new h.w.Event('change',{bubbles:true}));}
 function answer(h,request,extra={}){h.emit({type:'agentResponse',operation:request.operation,roomId:request.roomId,status:'answer',text:'A private answer',answerId:request.operation,model:'test-model',shared:false,...extra});}
 
+test('shared code actions carry the room and recover with snapshots without assuming a different commit means different code',t=>{
+ const h=setup(t),r=collaboration(h);r.messages[0].attachment={path:'src/utils.ts',line:42,endLine:44,code:'function greet() {\n return "hello";\n}',branch:'author',commit:'different-commit',symbol:'greet'};
+ h.emit({...h.state,active:r.id,rooms:[r],linked:true});
+ assert.equal(h.q('.revision-warning'),null);assert.match(h.q('.code-card').textContent,/greet/);
+ h.click('[data-action="openFile"]');assert.equal(h.requests.at(-1).roomId,r.id);
+ h.emit({type:'referenceStatus',roomId:r.id,repoRoot:h.state.repo.root,id:'root',status:'snapshot',reason:'changed',differs:true});
+ assert.match(h.q('.revision-warning').textContent,/Local code differs/);h.click('[data-action="showDiff"]');
+ assert.equal(h.requests.at(-1).roomId,r.id);assert.equal(h.requests.at(-1).id,'root');
+ h.click('[data-tab="discussions"]');h.click('[data-action="openThread"][data-id="open"]');
+ assert.equal(h.requests.at(-1).type,'inspectReference');assert.equal(h.requests.at(-1).roomId,r.id);
+ h.click('[data-action="openSnapshot"]');assert.equal(h.requests.at(-1).type,'openSnapshot');assert.equal(h.requests.at(-1).roomId,r.id);
+});
+
+test('reference status ignores late results and clears when room, checkout or account changes',t=>{
+ const h=setup(t),r=collaboration(h);r.messages[0].attachment={path:'src/utils.ts',line:1,endLine:1,code:'hello()',branch:'main',commit:'abc'};
+ const active={...h.state,active:r.id,rooms:[r],linked:true};h.emit(active);
+ const status={type:'referenceStatus',roomId:r.id,repoRoot:h.state.repo.root,id:'root',status:'snapshot',reason:'ambiguous'};
+ h.emit({...status,roomId:'other'});assert.equal(h.q('.revision-warning'),null);
+ h.emit({...status,repoRoot:'C:/other'});assert.equal(h.q('.revision-warning'),null);
+ h.emit(status);assert.match(h.q('.revision-warning').textContent,/Multiple excerpts/);
+ h.emit({...active,repo:{...active.repo,root:'C:/other'}});assert.equal(h.q('.revision-warning'),null);
+ h.emit(status);assert.equal(h.q('.revision-warning'),null);
+ h.emit(active);h.emit(status);h.emit({...active,userId:'other'});assert.equal(h.q('.revision-warning'),null);
+ h.emit({...active,linked:false});assert.match(h.q('.code-card .revision-warning').textContent,/Link your local project/);
+ h.click('.code-card [data-action="linkRoom"]');assert.equal(h.requests.at(-1).type,'linkRoom');
+});
+
 test('email and Google authentication have no language selector or language override',t=>{
  const h=setup(t);h.emit({...h.state,authenticated:false});assert.equal(h.q('#auth-language'),null);h.click('[data-auth="signup"]');
  assert.equal(h.q('#auth-language'),null);

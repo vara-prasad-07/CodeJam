@@ -1,5 +1,30 @@
 # Changelog
 
+## 1.0.17
+
+- Remove default webview side padding and the inset header shell so the interface fills the panel.
+- Simplify the header to flat rows and underline navigation; remove nested gradients, decorative borders and excess spacing.
+
+## 1.0.16
+
+- Redesign the workspace header with rounded surfaces, a blue/cyan project mark, a clearer room selector and segmented navigation.
+- Match composer, menu and code-card corner radii, with compact-sidebar and high-contrast layouts.
+
+## 1.0.15
+
+- Add a subtle blue/cyan light that travels around the message composer's border, with reduced-motion and high-contrast fallbacks.
+
+## 1.0.14
+
+- Remember a local project folder per room, account and backend, including forks and different checkout paths; select a folder when Git identity is ambiguous.
+- Open shared code only after finding its exact excerpt in the local file, relocating moved lines and checking function context when available.
+- Fall back to a read-only shared snapshot for missing, changed, ambiguous, unlinked or unsafe references, with optional local-file comparison.
+
+## 1.0.13
+
+- Play the CodeJam intro when opening a workspace, hold the final logo while NexConn connects, and fade into the loaded workspace.
+- Keep sign-in and connection recovery accessible, with a static logo fallback and reduced-motion support.
+
 ## 1.0.12
 
 - Fix invisible voice-message waveform bars by defining their heights in the stylesheet, compatible with VS Code's webview security policy. Improve waveform contrast.

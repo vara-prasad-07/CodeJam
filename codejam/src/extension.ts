@@ -1,9 +1,10 @@
 ﻿import * as vscode from 'vscode';
 import { randomBytes, randomUUID } from 'node:crypto';
 import * as path from 'node:path';
-import { realpath } from 'node:fs/promises';
+import { stat } from 'node:fs/promises';
 import { detectRepository, readGitDiff, Repository } from './repository';
-import { createMessage, createRoom, LocalState, Room, ChatMessage } from './model';
+import { createMessage, createRoom, LocalState, Room, ChatMessage, Attachment } from './model';
+import { checkoutKey, isWithin, sameRepository, resolveReferenceFile, locateExcerpt } from './codeReference';
 import { RefreshPolicy } from './refreshPolicy';
 import { AgentController } from './agentHost';
 import { VoiceRecorder } from './voice';
@@ -17,6 +18,7 @@ export function activate(context: vscode.ExtensionContext) {
  let backgroundQueued = false;
  let shared: LocalState = { rooms: [] }, repo: Repository | undefined;
  let selectedFolder = context.workspaceState.get<string>('codejam.folder');
+ let checkout: {key:string; root:string} | undefined;
  let connection = 'Connecting to Nexconn…', refreshing = false, serverUserId = '';
  let queue = Promise.resolve(), sdkOwner: vscode.Webview | undefined, sdkConnected = false;
  const rpc = new Map<string, { owner: vscode.Webview; resolve(value: any): void; reject(error: Error): void; timer: ReturnType<typeof setTimeout> }>();
@@ -31,20 +33,63 @@ export function activate(context: vscode.ExtensionContext) {
  });
  const voiceUnavailable = () => vscode.env?.remoteName ? 'Voice recording needs a local desktop extension host. It is not available in this remote workspace yet.' : !recorder.available ? 'The native recorder for your platform is missing from this extension installation.' : '';
  const snapshots = new Map<string, string>();
- const linked = () => { const room = activeRoom(); return Boolean(room && repo && ((!room.repositoryIdentity || room.repositoryIdentity === repo.identity) || context.workspaceState.get<Record<string,string>>('codejam.links', {})[repo.root] === room.id)); };
+ const roomCheckoutKey = () => checkoutKey(apiUrl(),serverUserId,shared.active || '');
+ const linked = () => Boolean(repo && checkout?.key === roomCheckoutKey() && checkout.root === repo.root);
  const config = () => vscode.workspace.getConfiguration('codejam');
  const apiUrl = () => config().get<string>('apiUrl', 'https://codejam-vdmp.onrender.com').trim().replace(/\/$/, '');
  const browserUrl = () => { const url = new URL(apiUrl()); if (url.hostname === '127.0.0.1') { url.hostname = 'localhost'; } return url.origin; };
  const name = () => config().get<string>('displayName', '').trim() || 'Developer';
  const languageKey = () => 'codejam.translation.language.' + JSON.stringify([apiUrl(),account?.id || serverUserId]);
  const accountLanguage = () => context.globalState.get<string>(languageKey()) || account?.language || 'en';
- const snapshot = () => ({ type: 'state', ...shared, repo, mode: 'nexconn', connection, connected: sdkConnected, updatesPaused: !refreshPolicy.canPoll, userId: serverUserId, displayName: account?.name || name(), user: account ? {...account,language:accountLanguage()} : undefined, authenticated: Boolean(account) && !needsAuth, aiConfigured, linked: linked(), voiceSupported:!voiceUnavailable(), voiceUnavailable:voiceUnavailable() });
+ const snapshot = () => ({ type: 'state', ...shared, repo, mode: 'nexconn', connection, connected: sdkConnected, startup: refreshing ? 'connecting' : sdkConnected ? 'ready' : needsAuth ? 'sign-in' : 'error', updatesPaused: !refreshPolicy.canPoll, userId: serverUserId, displayName: account?.name || name(), user: account ? {...account,language:accountLanguage()} : undefined, authenticated: Boolean(account) && !needsAuth, aiConfigured, linked: linked(), voiceSupported:!voiceUnavailable(), voiceUnavailable:voiceUnavailable() });
  const broadcast = async () => {
   if (recorder.state && recorder.state.roomId !== shared.active) { await recorder.cancel(); }
   await Promise.all([...views].map(v => v.postMessage(snapshot())));
  };
  const notice = (webview: vscode.Webview, text: string) => webview.postMessage({ type: 'notice', text });
  const activeRoom = () => shared.rooms.find(r => r.id === shared.active);
+
+ async function rememberCheckout(folder: string) {
+  if (!repo || !activeRoom()) { return; }
+  const key = roomCheckoutKey(), links = {...context.workspaceState.get<Record<string,string>>('codejam.checkouts', {})};
+  links[key] = folder; await context.workspaceState.update('codejam.checkouts', links);
+  selectedFolder = folder; checkout = {key,root:repo.root};
+ }
+ async function restoreCheckout() {
+  checkout = undefined;
+  const room = activeRoom(); if (!room) { return; }
+  const key = roomCheckoutKey(), folder = context.workspaceState.get<Record<string,string>>('codejam.checkouts', {})[key];
+  if (folder) {
+   try {
+    if (!(await stat(folder)).isDirectory()) { repo = undefined; return; }
+    repo = selectedFolder === folder && repo ? repo : await detectRepository(folder); selectedFolder = folder; checkout = {key,root:repo.root};
+   } catch { repo = undefined; }
+   return;
+  }
+  // Preserve an explicit link from older versions, scoped to this account/backend from now on.
+  if (repo && context.workspaceState.get<Record<string,string>>('codejam.links', {})[repo.root] === room.id) { await rememberCheckout(repo.root); return; }
+  // Only a unique real remote match can be linked automatically. Forks and local-only
+  // folders use the explicit picker; local directory names never establish a match.
+  const folders = vscode.workspace.workspaceFolders || [];
+  const matches: {folder:string; repo:Repository}[] = [];
+  for (const entry of folders) {
+   const candidate = entry.uri.fsPath === selectedFolder && repo ? repo : await detectRepository(entry.uri.fsPath);
+   if (sameRepository(candidate.identity, room.repositoryIdentity) && !matches.some(m => path.relative(m.repo.root,candidate.root) === '')) { matches.push({folder:entry.uri.fsPath,repo:candidate}); }
+  }
+  if (matches.length === 1) { repo = matches[0].repo; await rememberCheckout(matches[0].folder); }
+ }
+ async function chooseCheckout() {
+  const items = (vscode.workspace.workspaceFolders || []).map(f => ({label:f.name, description:f.uri.fsPath, folder:f.uri.fsPath}));
+  const selected = await vscode.window.showQuickPick([...items,{label:'Choose another project folder…',description:'Link a local checkout, fork, or non-Git folder',folder:''}], {placeHolder:'Choose your local project folder for this room'});
+  if (!selected) { return; }
+  let folder = selected.folder;
+  if (!folder) { folder = (await vscode.window.showOpenDialog({canSelectFiles:false,canSelectFolders:true,canSelectMany:false,openLabel:'Link project folder'}))?.[0]?.fsPath || ''; }
+  if (!folder) { return; }
+  if (!(await stat(folder)).isDirectory()) { throw new Error('Choose an existing project folder.'); }
+  agent.cancel();
+  repo = await detectRepository(folder); selectedFolder = folder;
+  await context.workspaceState.update('codejam.folder',folder); await rememberCheckout(folder); await broadcast();
+ }
 
  async function request(route: string, body?: unknown, signal?: AbortSignal): Promise<any> {
   const base = apiUrl();
@@ -136,6 +181,7 @@ export function activate(context: vscode.ExtensionContext) {
    const folders = vscode.workspace.workspaceFolders || [];
    const folder = folders.find(f => f.uri.fsPath === selectedFolder) || folders[0];
    repo = folder ? await detectRepository(folder.uri.fsPath) : undefined;
+   if (folder) { selectedFolder = folder.uri.fsPath; }
    try {
     if (!background || refreshPolicy.roomsDue) {
      const result = await request('/rooms'); serverUserId = result.userId; account = result.user || {id: result.userId, name: name()}; needsAuth = false; aiConfigured = result.aiConfigured === true;
@@ -143,6 +189,7 @@ export function activate(context: vscode.ExtensionContext) {
      shared = { rooms: result.rooms.map((r: Room) => { const old = shared.rooms.find(room => room.id === r.id); return {...old,...r,messages:(old?.messages || []).map(m => ({...m,author:r.members.find(member => member.id === m.userId)?.name || m.author})),hasMore:old?.hasMore}; }), active: result.rooms.some((r: Room) => r.id === active) ? active : result.rooms[0]?.id };
      refreshPolicy.roomsLoaded();
     }
+    await restoreCheckout();
     const r = activeRoom();
     if (r) {
      if (!background || refreshPolicy.detailsDue(r.id)) { await refreshDetails(); }
@@ -164,8 +211,7 @@ export function activate(context: vscode.ExtensionContext) {
      await context.workspaceState.update(`codejam.active.nexconn.${apiUrl()}`, shared.active);
     }
    }
-   await broadcast();
-  } finally { refreshing = false; }
+  } finally { refreshing = false; await broadcast(); }
  }
  async function refreshDetails() {
   const r = activeRoom(); if (!r) { return; }
@@ -180,15 +226,92 @@ export function activate(context: vscode.ExtensionContext) {
   if (sdkOwner && sdkConnected) { await sdk('disconnect'); } sdkConnected = false; loaded.clear(); shared = {rooms:[]};
   await context.secrets.store('codejam.session.nexconn.' + apiUrl(), result.token); account = result.user; serverUserId = result.user.id; needsAuth = false;
  }
- function captureSelection() {
+ function captureSelection(): Attachment {
     const editor = vscode.window.activeTextEditor;
     if (!editor || editor.selection.isEmpty || !repo) { throw new Error('Select a few lines in a project file, then attach them.'); }
     const relative = path.relative(repo.root, editor.document.uri.fsPath);
-    if (relative.startsWith('..') || path.isAbsolute(relative) || editor.document.uri.scheme !== 'file') { throw new Error('Select code inside the detected repository.'); }
+    if (!isWithin(repo.root, editor.document.uri.fsPath) || editor.document.uri.scheme !== 'file') { throw new Error('Select code inside the linked project folder.'); }
     if (/(^|[\\/])(\.env(?:\..*)?|.*\.(?:pem|key))$/i.test(relative)) { throw new Error('Secret and environment files cannot be shared.'); }
     const code = editor.document.getText(editor.selection);
     if (code.length > 12000) { throw new Error('Select fewer than 12,000 characters.'); }
     return { path: relative.replace(/\\/g, '/'), line: editor.selection.start.line + 1, endLine: editor.selection.end.character === 0 ? Math.max(editor.selection.start.line + 1, editor.selection.end.line) : editor.selection.end.line + 1, code, branch: repo.branch, commit: repo.commit, repository: repo.identity };
+ }
+ async function documentSymbols(uri: vscode.Uri) {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+   return await Promise.race([
+    vscode.commands.executeCommand<(vscode.DocumentSymbol | vscode.SymbolInformation)[] | undefined>('vscode.executeDocumentSymbolProvider',uri),
+    new Promise<undefined>(resolve => { timer = setTimeout(() => resolve(undefined),1500); })
+   ]);
+  } catch { return undefined; } finally { clearTimeout(timer); }
+ }
+ function flattenSymbols(items: (vscode.DocumentSymbol | vscode.SymbolInformation)[]): {name:string; kind:vscode.SymbolKind; range:vscode.Range}[] {
+  return items.flatMap(item => 'range' in item ? [{name:item.name,kind:item.kind,range:item.range},...flattenSymbols(item.children || [])] : [{name:item.name,kind:item.kind,range:item.location.range}]);
+ }
+ async function sharedSelection() {
+  const editor = vscode.window.activeTextEditor, attachment = captureSelection();
+  if (!editor) { return attachment; }
+  const version = editor.document.version, original = editor.selection;
+  const selection = original.end.character === 0 && original.end.line > original.start.line ? new vscode.Range(original.start.line,original.start.character,original.end.line-1,editor.document.lineAt(original.end.line-1).text.length) : original;
+  const symbols = await documentSymbols(editor.document.uri);
+  if (symbols && version === editor.document.version) {
+   const enclosing = flattenSymbols(symbols).filter(s => [vscode.SymbolKind.Function,vscode.SymbolKind.Method,vscode.SymbolKind.Constructor].includes(s.kind) && s.range.contains(selection))
+    .sort((a,b) => (a.range.end.line-a.range.start.line) - (b.range.end.line-b.range.start.line));
+   if (enclosing[0]) { attachment.symbol = enclosing[0].name.slice(0,200); }
+  }
+  return attachment;
+ }
+ function snapshotUri(attachment: Attachment) {
+  const filename = attachment.path.replace(/\\/g,'/').split('/').at(-1) || 'shared-code.txt';
+  const parts = path.posix.parse(filename), label = parts.name + '.shared' + (parts.ext || '.txt');
+  const uri = vscode.Uri.parse('codejam-snapshot:/' + randomUUID() + '/' + encodeURIComponent(label));
+  if (snapshots.size >= 100) { snapshots.delete(snapshots.keys().next().value!); }
+  snapshots.set(uri.toString(), attachment.code);
+  return uri;
+ }
+ async function openReference(webview: vscode.Webview, data: Record<string,unknown>) {
+  if (data.roomId !== undefined && data.roomId !== shared.active) { throw new Error('The room changed. Open the code from the current room.'); }
+  const message = findSource(String(data.id)), a = message?.attachment;
+  if (!a || typeof a.code !== 'string' || a.code.length > 12000) { throw new Error('Code reference no longer available.'); }
+  const status = async (reason: string, line?: number) => webview.postMessage({type:'referenceStatus',id:message.id,roomId:shared.active,repoRoot:repo?.root || '',status:reason === 'matched' ? 'matched' : reason === 'relocated' ? 'relocated' : 'snapshot',reason,line,differs:!['matched','relocated'].includes(reason)});
+  const reasons: Record<string,string> = {
+   unlinked:'Link your local project folder to this room to open its files.',
+   missing:'This file is missing from your checkout. The shared code is still available.',
+   outside:'This path points outside your linked project. Showing the shared code instead.',
+   invalid:'This reference has no safe relative file path. Showing the shared code instead.',
+   unreadable:'The local file cannot be read. Showing the shared code instead.',
+   'too-large':'The local file is too large to match safely. Showing the shared code instead.',
+   changed:'Your local function or code differs from the shared excerpt. Showing the original shared code.',
+   ambiguous:'More than one local excerpt matches. Showing the shared code rather than choosing one.'
+  };
+  const fallback = async (reason: string) => {
+   await status(reason);
+   if (data.type === 'inspectReference') { return; }
+   const doc = await vscode.workspace.openTextDocument(snapshotUri(a));
+   await vscode.window.showTextDocument(doc,{preview:true});
+   await notice(webview,reasons[reason] || 'Opened the original shared code snapshot.');
+  };
+  if (data.type === 'openSnapshot') { await fallback('snapshot'); return; }
+  if (!repo || !linked()) { await fallback('unlinked'); return; }
+  const file = await resolveReferenceFile(repo.root,a.path);
+  if (file.status !== 'available') { await fallback(file.status); return; }
+  let document: vscode.TextDocument;
+  try { document = await vscode.workspace.openTextDocument(file.target); } catch { await fallback('unreadable'); return; }
+  if (data.type === 'showDiff') {
+   await vscode.commands.executeCommand('vscode.diff',snapshotUri(a),document.uri,a.path + ' — shared excerpt ↔ local file',{preview:true}); return;
+  }
+  const version = document.version, match = locateExcerpt(document.getText(),a);
+  if (match.status !== 'matched') { await fallback(match.status); return; }
+  const selection = new vscode.Range(match.line,match.character,match.endLine,match.endCharacter);
+  if (a.symbol) {
+   const symbols = await documentSymbols(document.uri);
+   const contextRange = match.endCharacter === 0 && match.endLine > match.line ? new vscode.Range(match.line,match.character,match.endLine-1,document.lineAt(match.endLine-1).text.length) : selection;
+   const verified = symbols ? flattenSymbols(symbols).some(s => s.name === a.symbol && s.range.contains(contextRange)) : a.code.includes(a.symbol);
+   if (!verified || version !== document.version) { await fallback('changed'); return; }
+  }
+  await status(match.line + 1 === a.line ? 'matched' : 'relocated',match.line + 1);
+  if (version !== document.version) { await fallback('changed'); return; }
+  if (data.type !== 'inspectReference') { await vscode.window.showTextDocument(document,{selection,preview:true}); }
  }
  const agent = new AgentController<vscode.Webview>({
   destination:()=>({room:activeRoom(),repoRoot:repo?.root || '',userId:serverUserId,repository:repo?.identity || activeRoom()?.repositoryIdentity || '',hasRepository:Boolean(repo?.detected),linked:linked(),authenticated:Boolean(account)&&!needsAuth}),
@@ -227,16 +350,20 @@ export function activate(context: vscode.ExtensionContext) {
    else if (data.type === 'settings') { await vscode.commands.executeCommand('workbench.action.openSettings', 'codejam'); }
    else if (data.type === 'chooseRepository') {
     agent.cancel();
-    const items = (vscode.workspace.workspaceFolders || []).map(f => ({ label: f.name, description: f.uri.fsPath, folder: f.uri.fsPath }));
-    if (!items.length) { await vscode.commands.executeCommand('vscode.openFolder'); return; }
-    const selected = await vscode.window.showQuickPick(items, { placeHolder: 'Choose the workspace folder whose repository to use' });
-    if (selected) { selectedFolder = selected.folder; await context.workspaceState.update('codejam.folder', selectedFolder); await refresh(); }
+    if (activeRoom()) { await chooseCheckout(); }
+    else {
+     const items = (vscode.workspace.workspaceFolders || []).map(f => ({ label: f.name, description: f.uri.fsPath, folder: f.uri.fsPath }));
+     if (!items.length) { await vscode.commands.executeCommand('vscode.openFolder'); return; }
+     const selected = await vscode.window.showQuickPick(items, { placeHolder: 'Choose the workspace folder whose repository to use' });
+     if (selected) { selectedFolder = selected.folder; await context.workspaceState.update('codejam.folder', selectedFolder); await refresh(); }
+    }
    }
    else if (data.type === 'createRoom') {
     if (!repo) { throw new Error('Open a project folder before creating a room.'); }
     const room = createRoom(data.name, repo, { id: serverUserId, name: name() });
     const result = await request('/rooms', { name: room.name, repository: repo.name, repositoryIdentity: repo.identity });
     shared.rooms.push(result.room); shared.active = result.room.id;
+    await rememberCheckout(repo.root);
     await context.workspaceState.update(`codejam.active.nexconn.${apiUrl()}`, shared.active);
     try { await ensureChat(); await loadHistory(); await refreshDetails(); } catch (error) { connection = (error as Error).message; await notice(webview, connection); }
     await broadcast();
@@ -263,6 +390,7 @@ export function activate(context: vscode.ExtensionContext) {
      if (shared.active === room.id) { shared.active = shared.rooms[0]?.id; }
      await context.workspaceState.update(`codejam.active.nexconn.${apiUrl()}`, shared.active);
     }
+    await restoreCheckout();
     await broadcast();
    }
    else if (data.type === 'switchRoom') {
@@ -272,6 +400,7 @@ export function activate(context: vscode.ExtensionContext) {
     if (!shared.rooms.some(r => r.id === data.id)) { throw new Error('Room not found.'); }
     shared.active = data.id as string;
     await context.workspaceState.update(`codejam.active.nexconn.${apiUrl()}`, shared.active);
+    await restoreCheckout();
     await refreshDetails();
     if (!loaded.has(shared.active)) { try { await loadHistory(); } catch (error) { connection = (error as Error).message; await notice(webview, connection); } }
     await broadcast();
@@ -357,9 +486,8 @@ export function activate(context: vscode.ExtensionContext) {
     await context.secrets.delete('codejam.session.nexconn.' + apiUrl()); shared = {rooms:[]}; account = undefined; serverUserId = ''; needsAuth = true; sdkConnected = false; loaded.clear(); await broadcast();
    }
    else if (data.type === 'linkRoom') {
-    if (!repo || !activeRoom()) { throw new Error('Open a project and choose a room first.'); }
-    const links = context.workspaceState.get<Record<string,string>>('codejam.links', {}); links[repo.root] = shared.active!;
-    await context.workspaceState.update('codejam.links',links); await broadcast();
+    if (!activeRoom()) { throw new Error('Choose a room first.'); }
+    await chooseCheckout();
    }
    else if (data.type === 'createDiscussion') {
     const source = findSource(String(data.id)); if (!source) { throw new Error('Choose a message for the discussion.'); }
@@ -397,22 +525,9 @@ export function activate(context: vscode.ExtensionContext) {
     await notice(webview, 'Invitation code copied. Your teammate must use the same CodeJam backend.');
    }
    else if (data.type === 'selection') {
-    await webview.postMessage({type:'selection',attachment:captureSelection()});
+    await webview.postMessage({type:'selection',attachment:await sharedSelection()});
    }
-   else if (data.type === 'openFile' || data.type === 'showDiff' || data.type === 'inspectReference') {
-    const message = findSource(String(data.id));
-    if (!message?.attachment || !repo) { throw new Error('Code reference not found.'); }
-    const a = message.attachment, root = await realpath(repo.root), target = await realpath(path.resolve(root, a.path));
-    const relative = path.relative(root, target);
-    if (relative.startsWith('..') || path.isAbsolute(relative)) { throw new Error('This file is outside the linked repository.'); }
-    if (!linked()) { throw new Error('Confirm the local repository link before opening shared code.'); }
-    if (data.type === 'inspectReference') { const document = await vscode.workspace.openTextDocument(target); const local = document.getText(new vscode.Range(Math.min(a.line-1, document.lineCount-1), 0, Math.min(a.endLine-1, document.lineCount-1), document.lineAt(Math.min(a.endLine-1, document.lineCount-1)).text.length)); await webview.postMessage({type:'referenceStatus',id:message.id,differs:a.commit!==repo.commit || local.replace(/\r\n/g,'\n').trimEnd()!==a.code.replace(/\r\n/g,'\n').trimEnd()}); return; }
-    if (data.type === 'showDiff') { const uri = vscode.Uri.parse('codejam-snapshot:' + randomUUID()); if (snapshots.size >= 100) { snapshots.delete(snapshots.keys().next().value!); } snapshots.set(uri.toString(), '\n'.repeat(Math.min(a.line-1,100000)) + a.code); await vscode.commands.executeCommand('vscode.diff', uri, vscode.Uri.file(target), a.path + ' ? shared excerpt ? working copy'); return; }
-    if (a.commit !== repo.commit) { await notice(webview, 'Your checkout differs from the shared revision. The chat keeps the original excerpt.'); }
-    const doc = await vscode.workspace.openTextDocument(target);
-    const line = Math.max(0, Math.min(doc.lineCount - 1, a.line - 1));
-    await vscode.window.showTextDocument(doc, { selection: new vscode.Range(line, 0, line, 0) });
-   }
+   else if (['openFile','showDiff','inspectReference','openSnapshot'].includes(String(data.type))) { await openReference(webview,data); }
    if (operation) { await webview.postMessage({ type: 'result', operation, ok: true, ...(decisionId ? {decisionId,roomId:data.roomId} : {}) }); }
   } catch (error) {
    await notice(webview, (error as Error).message);
@@ -446,7 +561,7 @@ export function activate(context: vscode.ExtensionContext) {
   const resource = (file: string) => webview.asWebviewUri(vscode.Uri.joinPath(context.extensionUri, 'media', file));
   const nonce = randomBytes(16).toString('hex');
   // Nexconn supplies regional navigation and WebSocket hosts dynamically in its token.
-  webview.html = `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; connect-src https: wss:; media-src https: blob:; style-src ${webview.cspSource}; script-src 'nonce-${nonce}';"><link rel="stylesheet" href="${resource('style.css')}"><title>CodeJam</title></head><body><div id="app"><p>Connecting to Nexconn…</p></div><script nonce="${nonce}" src="${resource('nexconn.js')}"></script><script nonce="${nonce}" src="${resource('app.js')}"></script></body></html>`;
+  webview.html = `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; connect-src https: wss:; img-src ${webview.cspSource}; media-src ${webview.cspSource} https: blob:; style-src ${webview.cspSource}; script-src 'nonce-${nonce}';"><link rel="stylesheet" href="${resource('style.css')}"><title>CodeJam</title></head><body class="startup-active"><section id="startup" class="startup" aria-label="Opening CodeJam"><div class="startup-content"><div class="startup-visual"><img id="startup-logo" src="${resource('codejam-intro-poster.png')}" alt="CodeJam" width="640" height="480"><video id="startup-video" autoplay muted playsinline preload="auto" poster="${resource('codejam-intro-poster.png')}" aria-hidden="true"><source src="${resource('codejam-intro.webm')}" type="video/webm"><source src="${resource('codejam-intro.mp4')}" type="video/mp4"></video></div><p class="startup-status" role="status"><span class="startup-dot" aria-hidden="true"></span><span id="startup-message">Connecting to NexConn…</span></p><button id="startup-continue" class="text-button" type="button" hidden>Open connection options</button></div></section><div id="app" inert aria-hidden="true"></div><script nonce="${nonce}" src="${resource('startup.js')}"></script><script nonce="${nonce}" src="${resource('nexconn.js')}"></script><script nonce="${nonce}" src="${resource('app.js')}"></script></body></html>`;
   context.subscriptions.push(webview.onDidReceiveMessage(input => {
    // Resolve SDK RPCs immediately: the command queue may be awaiting this result.
    if (input?.type === 'sdkResult') {
@@ -476,7 +591,7 @@ export function activate(context: vscode.ExtensionContext) {
  context.subscriptions.push(vscode.commands.registerCommand('codejam.shareSelection', async () => {
   const editor = vscode.window.activeTextEditor; if (!editor || editor.selection.isEmpty) { await vscode.window.showInformationMessage('Select code in an editor first.'); return; }
   if (!repo) { const folder = vscode.workspace.getWorkspaceFolder(editor.document.uri); if (folder) { repo = await detectRepository(folder.uri.fsPath); } }
-  const first = [...readyViews][0]; if (first) { await handle(first,{type:'selection'}); await vscode.commands.executeCommand('codejam.workspace.focus'); } else { pendingAttachment = captureSelection(); await vscode.commands.executeCommand('codejam.workspace.focus'); }
+  const first = [...readyViews][0]; if (first) { await handle(first,{type:'selection'}); await vscode.commands.executeCommand('codejam.workspace.focus'); } else { pendingAttachment = await sharedSelection(); await vscode.commands.executeCommand('codejam.workspace.focus'); }
  }));
  context.subscriptions.push(vscode.commands.registerCommand('codejam.open', () => vscode.commands.executeCommand('codejam.workspace.focus')));
  context.subscriptions.push(vscode.commands.registerCommand('codejam.selectMicrophone',async () => {

@@ -399,3 +399,43 @@ test('decision replacement, status filtering and typed implementation links use 
  h.click('.message-decision[data-id="before"]');h.click('.modal .decision-relation button');
  assert.equal(h.q('#modal-title').textContent,next.title);
 });
+
+
+test('custom voice player seeks, changes speed, pauses other clips and preserves playback across refresh',async t=>{
+ const h=setup(t),r=collaboration(h);
+ for(const id of ['clip1','clip2']){r.messages.push({id,author:'Teammate',userId:'other',text:'',createdAt:new Date().toISOString(),voice:{url:'https://media.example/'+id+'.wav',duration:8,mimeType:'audio/wav'}});}
+ h.emit({...h.state,active:r.id,rooms:[r]});
+ const players=[...h.w.document.querySelectorAll('.voice-message')],audios=players.map(p=>p.querySelector('audio'));
+ for(const audio of audios){let paused=true;Object.defineProperties(audio,{paused:{get:()=>paused},duration:{value:8,configurable:true}});audio.play=async()=>{paused=false;audio.dispatchEvent(new h.w.Event('play'));};audio.pause=()=>{paused=true;audio.dispatchEvent(new h.w.Event('pause'));};audio.dispatchEvent(new h.w.Event('loadedmetadata'));}
+ assert.equal(audios[0].controls,false);assert.equal(players[0].querySelector('.voice-duration').textContent,'0:08');
+ const before=h.requests.length;
+ players[0].querySelector('[data-voice-toggle]').click();await Promise.resolve();
+ assert.equal(players[0].querySelector('[data-voice-toggle]').getAttribute('aria-label'),'Pause voice message');
+ const seek=players[0].querySelector('.voice-seek');assert.equal(seek.disabled,false);seek.value=50;seek.dispatchEvent(new h.w.Event('input',{bubbles:true}));
+ assert.equal(audios[0].currentTime,4);assert.equal(players[0].querySelector('.voice-elapsed').textContent,'0:04');assert.equal(seek.getAttribute('aria-valuetext'),'0:04 of 0:08');
+ for(const speed of [1.5,2,1]){players[0].querySelector('[data-voice-speed]').click();assert.equal(audios[0].playbackRate,speed);}
+ h.emit({...h.state,active:r.id,rooms:[r]});
+ assert.equal(h.q('audio[data-audio-key="clip1"]'),audios[0]);assert.equal(h.q('.voice-elapsed').textContent,'0:04');assert.equal(h.q('[data-voice-toggle]').getAttribute('aria-label'),'Pause voice message');
+ h.w.document.querySelectorAll('[data-voice-toggle]')[1].click();await Promise.resolve();assert.equal(audios[0].paused,true);assert.equal(audios[1].paused,false);
+ h.w.document.querySelectorAll('[data-voice-toggle]')[1].click();assert.equal(audios[1].paused,true);assert.equal(h.requests.length,before);
+});
+
+test('custom voice player shows a private playback error and can retry before metadata is available',async t=>{
+ const h=setup(t),r=collaboration(h);r.messages.push({id:'clip',author:'Teammate',userId:'other',text:'',createdAt:new Date().toISOString(),voice:{url:'https://media.example/clip.wav',duration:8,mimeType:'audio/wav'}});
+ h.emit({...h.state,active:r.id,rooms:[r]});const audio=h.q('.voice-message audio');assert.equal(h.q('.voice-seek').disabled,true);assert.equal(h.q('.voice-duration').textContent,'0:08');
+ audio.play=async()=>{throw new Error('Unavailable');};h.click('[data-voice-toggle]');await new Promise(setImmediate);
+ assert.equal(h.q('.voice-playback-error').hidden,false);assert.match(h.q('.voice-playback-error').textContent,/retry/);
+ audio.play=async()=>{};h.click('[data-voice-toggle]');await new Promise(setImmediate);assert.equal(h.q('.voice-playback-error').hidden,true);
+ audio.dispatchEvent(new h.w.Event('error'));assert.equal(h.q('.voice-playback-error').hidden,false);
+});
+
+
+test('voice waveform heights come from the stylesheet under webview CSP',t=>{
+ const h=setup(t),r=collaboration(h);r.messages.push({id:'wave',author:'Teammate',userId:'other',text:'',createdAt:new Date().toISOString(),voice:{url:'https://media.example/wave.wav',duration:8,mimeType:'audio/wav'}});
+ const style=h.w.document.createElement('style');style.textContent=readFileSync(require('node:path').join(__dirname,'../media/style.css'),'utf8');h.w.document.head.append(style);
+ h.emit({...h.state,active:r.id,rooms:[r]});
+ const bars=[...h.w.document.querySelectorAll('.voice-wave > div:first-child i')];assert.equal(bars.length,38);
+ assert.equal(bars.some(bar=>bar.hasAttribute('style')),false,'inline style attributes are blocked by the real webview');
+ const heights=bars.map(bar=>parseFloat(h.w.getComputedStyle(bar).height));assert.ok(heights.every(height=>height>0));assert.ok(new Set(heights).size>5);
+ const fill=[...h.w.document.querySelectorAll('.voice-wave-fill i')];assert.deepEqual(fill.map(bar=>h.w.getComputedStyle(bar).height),bars.map(bar=>h.w.getComputedStyle(bar).height));
+});

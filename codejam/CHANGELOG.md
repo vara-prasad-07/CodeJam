@@ -2,6 +2,7 @@
 
 ## 1.0.11
 
+- Replace the browser voice-message controls with a compact player featuring play/pause, seekable waveform-style progress, elapsed/total time, playback speeds and retryable playback errors.
 - Add private message translation into English, Hindi and Telugu through Nexconn. Start new accounts in English and remember the language selected when translating.
 - Support older backends without the language-preference endpoint by remembering the preference locally per account.
 - Improve visibility of message actions, emoji choices and sharing controls with stronger contrast, larger buttons and clear focus states.

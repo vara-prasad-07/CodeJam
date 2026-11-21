@@ -41,8 +41,40 @@
  }
  function voicePlayer(audio,key){
   try{const url=new URL(audio.url);if(url.protocol!=='https:'||url.username||url.password){return '';}}catch{return '';}
-  return `<div class="voice-message"><audio controls preload="none" src="${esc(audio.url)}" data-audio-key="${esc(key)}" aria-label="Voice message"></audio><span>${esc(voiceTime(audio.duration))}</span></div>`;
+  const bars='<i></i>'.repeat(38);
+  return `<div class="voice-message" role="group" aria-label="Voice message" data-duration="${Number(audio.duration)||0}"><audio hidden preload="none" src="${esc(audio.url)}" data-audio-key="${esc(key)}"></audio><button type="button" class="voice-play" data-voice-toggle aria-label="Play voice message" title="Play voice message">${voicePlayIcon(false)}</button><div class="voice-track"><div class="voice-wave" aria-hidden="true"><div>${bars}</div><div class="voice-wave-fill">${bars}</div></div><input class="voice-seek" type="range" min="0" max="100" step="0.1" value="0" aria-label="Seek voice message" disabled><div class="voice-timing"><span class="voice-elapsed">0:00</span><span class="voice-duration">${esc(voiceTime(audio.duration))}</span></div></div><button type="button" class="voice-speed" data-voice-speed aria-label="Playback speed: 1x" title="Change playback speed">1x</button><span class="voice-playback-error" role="status" hidden></span></div>`;
  }
+ function voicePlayIcon(playing){return '<svg aria-hidden="true" viewBox="0 0 24 24" fill="currentColor">'+(playing?'<path d="M7 5h4v14H7zm6 0h4v14h-4z"/>':'<path d="m9 5 11 7-11 7z"/>')+'</svg>';}
+ function syncVoicePlayer(audio){
+  const player=audio.closest('.voice-message');if(!player){return;}
+  const duration=Number.isFinite(audio.duration)&&audio.duration>0?audio.duration:Number(player.dataset.duration)||0;
+  const elapsed=Number.isFinite(audio.currentTime)?audio.currentTime:0,percent=duration?Math.min(100,elapsed/duration*100):0;
+  const toggle=player.querySelector('[data-voice-toggle]'),label=audio.paused?'Play voice message':'Pause voice message';
+  toggle.innerHTML=voicePlayIcon(!audio.paused);toggle.setAttribute('aria-label',label);toggle.title=label;
+  player.querySelector('.voice-elapsed').textContent=voiceTime(elapsed);
+  player.querySelector('.voice-duration').textContent=voiceTime(duration);
+  player.querySelector('.voice-wave-fill').style.clipPath='inset(0 '+(100-percent)+'% 0 0)';
+  const seek=player.querySelector('.voice-seek');seek.value=percent;seek.disabled=!Number.isFinite(audio.duration)||audio.duration<=0;
+  seek.setAttribute('aria-valuetext',voiceTime(elapsed)+' of '+voiceTime(duration));
+  const speed=player.querySelector('[data-voice-speed]');speed.textContent=audio.playbackRate+'x';speed.setAttribute('aria-label','Playback speed: '+audio.playbackRate+'x');
+  const error=player.querySelector('.voice-playback-error');error.hidden=!audio.dataset.voiceError;error.textContent=audio.dataset.voiceError||'';
+ }
+ for(const event of ['timeupdate','loadedmetadata','durationchange','play','pause','ended','ratechange','error']){app.addEventListener(event,e=>{
+  if(e.target.tagName!=='AUDIO'||!e.target.closest('.voice-message')){return;}
+  if(event==='error'){e.target.dataset.voiceError='Could not play audio. Tap play to retry.';}
+  syncVoicePlayer(e.target);
+ },true);}
+ app.addEventListener('click',async e=>{
+  const control=e.target.closest('[data-voice-toggle],[data-voice-speed]');if(!control){return;}
+  const audio=control.closest('.voice-message').querySelector('audio');
+  if(control.hasAttribute('data-voice-speed')){audio.playbackRate=audio.playbackRate===1?1.5:audio.playbackRate===1.5?2:1;syncVoicePlayer(audio);return;}
+  if(!audio.paused){audio.pause();return;}
+  delete audio.dataset.voiceError;
+  try{if(audio.error){audio.load();}await audio.play();}catch(error){if(error.name!=='AbortError'){audio.dataset.voiceError='Could not play audio. Tap play to retry.';}}
+  syncVoicePlayer(audio);
+ });
+ app.addEventListener('input',e=>{if(!e.target.matches('.voice-seek')){return;}const audio=e.target.closest('.voice-message').querySelector('audio');if(Number.isFinite(audio.duration)&&audio.duration>0){audio.currentTime=Number(e.target.value)/100*audio.duration;syncVoicePlayer(audio);}});
+
  function voiceTime(seconds){const n=Math.floor(Math.max(0,Number(seconds)||0));return Math.floor(n/60)+':'+String(n%60).padStart(2,'0');}
  function voiceComposer(){
   const recording=voice.phase==='recording',preview=voice.phase==='preview',uploading=voice.phase==='uploading';
@@ -278,6 +310,7 @@
   for(const el of app.children){el.inert=!!modal&&!el.classList.contains('modal-backdrop');}
   resizeComposer();positionAgentContext();
   for(const audio of app.querySelectorAll('audio')){const previous=playback.find(p=>p.key===audio.dataset.audioKey&&p.element.src===audio.src);if(previous){audio.replaceWith(previous.element);previous.reused=true;if(previous.playing&&previous.element.paused){previous.element.play().catch(()=>{});}}}
+  for(const audio of app.querySelectorAll('.voice-message audio')){syncVoicePlayer(audio);}
   for(const previous of playback){if(!previous.reused&&!previous.element.paused){previous.element.pause();}}
   const nextScroll=document.getElementById('messages');if(nextScroll){const key=state.active+'/'+(threadId||'chat');nextScroll.dataset.scrollKey=key;nextScroll.scrollTop=scroll?.dataset.scrollKey===key&&nearBottom?nextScroll.scrollHeight:(scrollPositions.get(key)??nextScroll.scrollHeight);}
   if(showAgentContext){const target=document.getElementById(focus?.id);(target?.closest('#agent-context-popover')?target:document.getElementById('ai-code'))?.focus({preventScroll:true});}else{restoreFocus(focus);}

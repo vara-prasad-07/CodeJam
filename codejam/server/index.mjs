@@ -8,6 +8,7 @@ import { createFirestoreStore } from './firestore.mjs';
 import { createFirebaseAuth } from './auth.mjs';
 import { createAI } from './ai.mjs';
 import { createLegacyMigration } from './legacy-migration.mjs';
+import { hasDecisionHistory, updateDecision } from './decisions.mjs';
 
 const hash = value => createHash('sha256').update(value).digest('hex');
 const fail=(status,message)=>{const error=new Error(message);error.status=status;throw error;};
@@ -34,7 +35,7 @@ export async function createRoomServer({store=createFirestoreStore(),nexconn=cre
  }
  async function mutate(collection,id,change){
   const key=collection+'/'+id,previous=locks.get(key)||Promise.resolve();
-  const task=previous.catch(()=>{}).then(async()=>{for(let attempt=0;attempt<3;attempt++){const current=await store.get(collection,id);const updated=await change(current);try{return await store.put(collection,id,updated,current?._version);}catch(e){if(e.status!==409||attempt===2){throw e;}}}});
+  const task=previous.catch(()=>{}).then(async()=>{for(let attempt=0;attempt<3;attempt++){const current=await store.get(collection,id);const updated=await change(current);if(updated===current){return current;}try{return await store.put(collection,id,updated,current?._version ?? null);}catch(e){if(e.status!==409||attempt===2){throw e;}}}});
   locks.set(key,task);try{return await task;}finally{if(locks.get(key)===task){locks.delete(key);}}
  }
  const migration=await createLegacyMigration({store,filePath:legacyFile,enabled:migrate});
@@ -171,15 +172,29 @@ export async function createRoomServer({store=createFirestoreStore(),nexconn=cre
   if(req.method==='POST'&&resource==='invite'){const updated=await mutate('codejam_rooms',id,r=>({...r,invite:'cdj-'+randomBytes(18).toString('hex'),inviteExpiresAt:Date.now()+7*86400000}));return {room:publicRoom(updated)};}
   if(req.method==='GET'&&resource==='details'){
    const[pins,discussions,presence,reactions,call]=await Promise.all([store.list(collection('pins')),store.list(collection('discussions')),store.list(collection('presence')),store.list(collection('reactions')),store.get(collection('state'),'call')]);
-   return {ownerId:roomOwner(room),members:room.members,invite:room.invite,inviteExpiresAt:room.inviteExpiresAt,pins,discussions,presence:presence.filter(p=>Date.now()-p.lastSeen<90000),reactions,call:call&&Date.now()-call.lastSeen<90000?call:null};
+   return {ownerId:roomOwner(room),members:room.members,invite:room.invite,inviteExpiresAt:room.inviteExpiresAt,pins:pins.map(pin=>({...pin,status:pin.status||'accepted'})),discussions,presence:presence.filter(p=>Date.now()-p.lastSeen<90000),reactions,call:call&&Date.now()-call.lastSeen<90000?call:null};
   }
   if(req.method==='POST'&&resource==='presence'){
    const focus=String(body.focus||'Working in the project').slice(0,180);await store.put(collection('presence'),user.id,{id:user.id,name:user.name,focus,lastSeen:Date.now()});return {ok:true};
   }
   if(req.method==='POST'&&resource==='pins'){
-   if(!text(body.title,100)){fail(400,'Give the decision a title (up to 100 characters).');}const source=cleanSource(body.source,room),pin={id:hash(source.id).slice(0,32),title:body.title.trim(),text:String(body.text||source.text).slice(0,12000),source,discussionId:typeof body.discussionId==='string'?body.discussionId:'',createdAt:now(),pinnedBy:user.name,pinnedById:user.id};await store.put(collection('pins'),pin.id,pin);return {pin};
+   if(!text(body.title,100)){fail(400,'Give the decision a title (up to 100 characters).');}
+   const source=cleanSource(body.source,room), pinId=hash(source.id).slice(0,32);
+   const pin=await mutate(collection('pins'),pinId,current=>{
+    if(current && hasDecisionHistory(current)){fail(409,'This decision has replacement history. Open it in Decisions.');}
+    return {...current,id:pinId,title:body.title.trim(),text:String(body.text||source.text).slice(0,12000),source,discussionId:typeof body.discussionId==='string'?body.discussionId:'',status:'accepted',createdAt:now(),pinnedBy:user.name,pinnedById:user.id};
+   });
+   return {pin};
   }
-  if(req.method==='POST'&&resource.startsWith('pins/')){const pinId=resource.split('/')[1];await store.remove(collection('pins'),pinId);return {ok:true};}
+  if(req.method==='POST'&&/^pins\/[\w-]+$/.test(resource)){
+   const pinId=resource.slice(5), pins=collection('pins'), current=await store.get(pins,pinId);
+   if(current){
+    if(hasDecisionHistory(current)){fail(409,'This decision is part of a replacement history and must be kept.');}
+    await store.remove(pins,pinId,current._version);
+   }
+   return {ok:true};
+  }
+  if(req.method==='POST'&&resource==='decisions'){return updateDecision({store,collection,mutate,user,body});}
   if(req.method==='POST'&&resource==='discussions'){
    const source=cleanSource(body.source,room);if(!text(body.title,120)){fail(400,'Add a discussion title.');}const discussionId=hash(source.id).slice(0,24);const existing=await store.get(collection('discussions'),discussionId);if(existing){return {discussion:existing};}const discussion={id:discussionId,title:body.title.trim(),source,status:'open',createdAt:now(),createdBy:user.id,updatedAt:now()};await store.put(collection('discussions'),discussion.id,discussion);return {discussion};
   }

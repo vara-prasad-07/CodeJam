@@ -94,3 +94,27 @@ test('Firestore room cleanup deletes physical document IDs across pages',async()
  await store.clear('codejam_rooms/r/reactions');
  assert.equal(requests.length,4);assert.match(requests[1][0],/reactions\/physical-1$/);assert.match(requests[2][0],/pageToken=page-two/);assert.match(requests[3][0],/reactions\/physical-2$/);
 });
+
+test('decision replacements commit both Firestore preconditions and memory writes are all-or-nothing',async()=>{
+ let sent;
+ const store=createFirestoreStore({projectId:'test-project',getAccessToken:async()=>'test-token',fetchImpl:async(url,options)=>{
+  sent={url:String(url),body:JSON.parse(options.body)};
+  return {ok:false,status:400,json:async()=>({error:{status:'FAILED_PRECONDITION'}})};
+ }});
+ const collection='codejam_rooms/r/pins';
+ const documents=[{value:{id:'old',status:'superseded',_version:'v1'},version:'v1'},{value:{id:'new',status:'accepted'},version:null}];
+ await assert.rejects(store.putTogether(collection,documents),e=>e.status===409);
+ assert.ok(sent.url.endsWith('/documents:commit'));
+ const [old,next]=sent.body.writes;
+ assert.equal(old.update.name,'projects/test-project/databases/(default)/documents/'+collection+'/old');
+ assert.equal(next.update.name,'projects/test-project/databases/(default)/documents/'+collection+'/new');
+ assert.deepEqual(old.currentDocument,{updateTime:'v1'});
+ assert.deepEqual(next.currentDocument,{exists:false});
+ assert.equal(old.update.fields._version,undefined);
+ const {createMemoryStore}=await import('./firestore.mjs');
+ const memory=createMemoryStore();
+ const original=await memory.put(collection,'old',{id:'old',status:'accepted'});
+ await memory.put(collection,'new',{id:'new',status:'proposed'});
+ await assert.rejects(memory.putTogether(collection,[{...documents[0],version:original._version},documents[1]]),e=>e.status===409);
+ assert.deepEqual(await memory.get(collection,'old'),original);
+});

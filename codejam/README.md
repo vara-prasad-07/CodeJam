@@ -30,7 +30,9 @@ Open a reference in your checkout. When your revision differs, inspect the saved
 - Exchange messages, replies and mentions through Nexconn Chat.
 - Open a message's **More actions** to start a discussion, save a decision, or ask AI. Find open and resolved conversations in **Discussions**.
 - Reply, react and resolve or reopen a discussion.
-- Pin a decision and search by title, text or path.
+- Open a discussion and choose **Propose decision**. A room member can use **Review proposal** to record the final choice and rationale, then accept it. Direct pins appear as **Accepted**.
+- In **Decisions**, search by title, text or file path and filter by status. **View details → Replace decision** lets you write a successor or select an accepted decision in the room. Both entries keep links to their history.
+- Use **View details → Implementation → Add link** to attach an HTTPS link to a pull request, issue or commit.
 - Reopen rooms and load earlier cloud history.
 
 Mention names containing spaces with underscores: `@First_Last`.

@@ -42,6 +42,7 @@ export function createAdminTokenProvider({credential,clock=Date.now}={}) {
 }
 export function createFirestoreStore({projectId=process.env.FIREBASE_PROJECT_ID||process.env.projectId||process.env.GOOGLE_CLOUD_PROJECT,getAccessToken=createAdminTokenProvider(),fetchImpl=fetch}={}) {
  if (!projectId) { throw new Error('Set FIREBASE_PROJECT_ID (or projectId) to the Firebase project containing your database.'); }
+ const documentRoot=`projects/${projectId}/databases/(default)/documents`;
  const base=`https://firestore.googleapis.com/v1/projects/${encodeURIComponent(projectId)}/databases/(default)/documents`;
  const clean = resource => {if(!/^[\w/-]+$/.test(resource)||resource.includes('..')){throw new Error('Invalid database resource.');}return resource;};
  const decode = doc => ({...decodeFields(doc.fields||{}),_version:doc.updateTime});
@@ -51,7 +52,7 @@ export function createFirestoreStore({projectId=process.env.FIREBASE_PROJECT_ID|
   if(typeof bearer!=='string'||!bearer){const e=new Error('Firebase Admin did not provide an access token.');e.status=503;throw e;}
   let response;try{response=await fetchImpl(url,{method,headers:{'Content-Type':'application/json',Authorization:'Bearer '+bearer},body:body===undefined?undefined:JSON.stringify(body),signal:AbortSignal.timeout(15000)});}catch{const e=new Error('Firestore is unreachable. Check the network and retry.');e.status=503;throw e;}
   const result=await response.json().catch(()=>({}));
-  if(response.status===404){return null;}
+  if(response.status===404 && suffix!==':commit' && !(method==='PATCH' && query['currentDocument.updateTime'])){return null;}
   if(!response.ok){
    if(response.status===429||result.error?.status==='RESOURCE_EXHAUSTED'){
     // Return only quota identifiers, never raw provider messages or credentials.
@@ -61,7 +62,9 @@ export function createFirestoreStore({projectId=process.env.FIREBASE_PROJECT_ID|
     const e=new Error(`Firestore quota or capacity limit reached.${quota.limit?' Limit: '+quota.limit+'.':''} Check this project's Firestore API quotas before retrying.`);
     Object.assign(e,{status:429,code:'FIRESTORE_RESOURCE_EXHAUSTED',quota,retryAfterSeconds:600});throw e;
    }
-   const e=new Error(`Firestore ${result.error?.status||response.status}. Check the configured project and database access.`);const conflict=response.status===409||response.status===412||(result.error?.status==='FAILED_PRECONDITION'&&(Object.hasOwn(query,'currentDocument.updateTime')||Object.hasOwn(query,'currentDocument.exists')));e.status=conflict?409:503;throw e;
+   const conditional=suffix===':commit'||Object.hasOwn(query,'currentDocument.updateTime')||Object.hasOwn(query,'currentDocument.exists');
+   const conflict=response.status===409||response.status===412||(conditional&&(response.status===404||result.error?.status==='FAILED_PRECONDITION'));
+   const e=new Error(conflict?'The record changed. Refresh and retry.':`Firestore ${result.error?.status||response.status}. Check the configured project and database access.`);e.status=conflict?409:503;throw e;
   }
   return result;
  }
@@ -70,7 +73,14 @@ export function createFirestoreStore({projectId=process.env.FIREBASE_PROJECT_ID|
   async get(collection,id){const result=await request('/'+clean(collection)+'/'+clean(id));return result?decode(result):null;},
   // null reserves a new document atomically; undefined keeps the usual upsert behavior.
   async put(collection,id,value,version){const query=version===null?{'currentDocument.exists':'false'}:version?{'currentDocument.updateTime':version}:{};const result=await request('/'+clean(collection)+'/'+clean(id),'PATCH',{fields:encodeFields(value)},query);return decode(result);},
-  async remove(collection,id){await request('/'+clean(collection)+'/'+clean(id),'DELETE');},
+  async putTogether(collection,documents){
+   const writes=documents.map(({value,version})=>({
+    update:{name:`${documentRoot}/${clean(collection)}/${clean(value.id)}`,fields:encodeFields(value)},
+    currentDocument:version===null?{exists:false}:{updateTime:version},
+   }));
+   await request(':commit','POST',{writes});
+  },
+  async remove(collection,id,version){await request('/'+clean(collection)+'/'+clean(id),'DELETE',undefined,version?{'currentDocument.updateTime':version}:{});},
   async clear(collection){
    let pageToken;
    do{
@@ -88,4 +98,44 @@ export function createFirestoreStore({projectId=process.env.FIREBASE_PROJECT_ID|
 }
 
 // Isolated unit-test adapter; never selected automatically by the application.
-export function createMemoryStore(){const rows=new Map();let serial=0;return {kind:'test-memory',async get(c,id){return structuredClone(rows.get(c+'/'+id)||null);},async put(c,id,value,version){const old=rows.get(c+'/'+id);if((version===null&&old)||(version&&old?._version!==version)){const e=new Error('Conflict');e.status=409;throw e;}const row={...structuredClone(value),_version:String(++serial)};rows.set(c+'/'+id,row);return structuredClone(row);},async remove(c,id){rows.delete(c+'/'+id);},async clear(c){for(const key of rows.keys()){if(key.startsWith(c+'/')){rows.delete(key);}}},async list(c,filter){return [...rows].filter(([key])=>key.startsWith(c+'/')&&!key.slice(c.length+1).includes('/')).map(([,value])=>structuredClone(value)).filter(value=>!filter||(filter.op==='ARRAY_CONTAINS'?value[filter.field]?.includes(filter.value):value[filter.field]===filter.value));}};}
+export function createMemoryStore(){
+ const rows=new Map();
+ let serial=0;
+ function checkVersion(key,version){
+  const existing=rows.get(key);
+  if((version===null&&existing)||(version&&existing?._version!==version)){
+   throw Object.assign(new Error('The record changed. Refresh and retry.'),{status:409});
+  }
+ }
+ function write(key,value){
+  const row={...structuredClone(value),_version:String(++serial)};
+  rows.set(key,row);
+  return structuredClone(row);
+ }
+ return {
+  kind:'test-memory',
+  async get(collection,id){return structuredClone(rows.get(collection+'/'+id)||null);},
+  async put(collection,id,value,version){
+   const key=collection+'/'+id;
+   checkVersion(key,version);
+   return write(key,value);
+  },
+  async putTogether(collection,documents){
+   for(const {value,version} of documents){checkVersion(collection+'/'+value.id,version);}
+   for(const {value} of documents){write(collection+'/'+value.id,value);}
+  },
+  async remove(collection,id,version){
+   const key=collection+'/'+id;
+   checkVersion(key,version);
+   rows.delete(key);
+  },
+  async clear(collection){
+   for(const key of rows.keys()){if(key.startsWith(collection+'/')){rows.delete(key);}}
+  },
+  async list(collection,filter){
+   return [...rows].filter(([key])=>key.startsWith(collection+'/')&&!key.slice(collection.length+1).includes('/'))
+    .map(([,value])=>structuredClone(value))
+    .filter(value=>!filter||(filter.op==='ARRAY_CONTAINS'?value[filter.field]?.includes(filter.value):value[filter.field]===filter.value));
+  },
+ };
+}

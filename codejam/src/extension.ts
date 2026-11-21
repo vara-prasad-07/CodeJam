@@ -218,6 +218,7 @@ export function activate(context: vscode.ExtensionContext) {
   if (!input || typeof input !== 'object' || !('type' in input)) { return; }
   const data = input as Record<string, unknown>;
   const operation = typeof data.operation === 'string' ? data.operation : undefined;
+  let decisionId: string | undefined;
   try {
    if (data.type === 'askAgent') { await agent.ask(webview,data); return; }
    else if (data.type === 'shareAgent') { await agent.share(webview,data.answerId); }
@@ -371,6 +372,20 @@ export function activate(context: vscode.ExtensionContext) {
     const source = findSource(String(data.id)); if (!source) { throw new Error('Message not found.'); }
     await request('/rooms/' + shared.active + '/pins',{source,title:data.title,text:data.text,discussionId:data.discussionId}); await refreshDetails(); await broadcast();
    }
+   else if (data.type === 'updateDecision') {
+    const room = activeRoom();
+    if (!room || room.id !== data.roomId) { throw new Error('The active room changed. Reopen the decision and try again.'); }
+    try {
+     const result = await request('/rooms/' + room.id + '/decisions', data.change);
+     decisionId = result.pin.id;
+    } catch (error) {
+     if ((error as Error).message === 'Endpoint not found.') { throw new Error('Update the CodeJam backend to use decision proposals, replacements and implementation links.'); }
+     if ((error as {status?:number}).status === 409) { await refreshDetails(); await broadcast(); }
+     throw error;
+    }
+    await refreshDetails();
+    await broadcast();
+   }
    else if (data.type === 'unpin') { await request('/rooms/' + shared.active + '/pins/' + encodeURIComponent(String(data.id)),{}); await refreshDetails(); await broadcast(); }
    else if (data.type === 'reaction') { await request('/rooms/' + shared.active + '/reactions',{messageId:data.id,emoji:data.emoji}); await refreshDetails(); await broadcast(); }
    else if (data.type === 'renewInvite') { const result = await request('/rooms/' + shared.active + '/invite',{}); Object.assign(activeRoom()!,result.room,{messages:activeRoom()!.messages}); await broadcast(); }
@@ -398,7 +413,7 @@ export function activate(context: vscode.ExtensionContext) {
     const line = Math.max(0, Math.min(doc.lineCount - 1, a.line - 1));
     await vscode.window.showTextDocument(doc, { selection: new vscode.Range(line, 0, line, 0) });
    }
-   if (operation) { await webview.postMessage({ type: 'result', operation, ok: true }); }
+   if (operation) { await webview.postMessage({ type: 'result', operation, ok: true, ...(decisionId ? {decisionId,roomId:data.roomId} : {}) }); }
   } catch (error) {
    await notice(webview, (error as Error).message);
    if (!refreshPolicy.canPoll) { await broadcast(); }

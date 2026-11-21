@@ -4,7 +4,14 @@ import type { VoiceAttachment } from './voice';
 export interface Attachment { path: string; line: number; endLine: number; code: string; branch: string; commit: string; repository?: string }
 export interface ChatMessage { id: string; author: string; userId: string; text: string; createdAt: string; attachment?: Attachment; voice?: VoiceAttachment; replyTo?: string; clientId?: string; discussionId?: string; mentions?: string[]; reviewedDraft?: boolean; agent?: {question:string; model:string} }
 export interface Room { id: string; ownerId?: string; channelId?: string; name: string; repository: string; createdAt: string; messages: ChatMessage[]; members: { id: string; name: string }[]; invite?: string; hasMore?: boolean; repositoryIdentity?: string; inviteExpiresAt?: number; pins?: Decision[]; discussions?: Discussion[]; reactions?: Reaction[]; presence?: Presence[]; call?: CallState | null }
-export interface Decision { id: string; title: string; text: string; source: ChatMessage; discussionId?: string; createdAt: string; pinnedBy: string }
+export interface Decision {
+ id: string; title: string; text: string; source: ChatMessage; discussionId?: string; createdAt: string; pinnedBy: string;
+ status?: 'proposed' | 'accepted' | 'superseded';
+ proposedAt?: string; acceptedAt?: string; acceptedBy?: string;
+ originalProposal?: {title: string; text: string};
+ supersededAt?: string; supersededBy?: string; replacedById?: string; replacesIds?: string[];
+ implementationLinks?: {kind: 'pr' | 'issue' | 'commit'; url: string}[];
+}
 export interface Discussion { id: string; title: string; source: ChatMessage; status: 'open' | 'resolved'; createdAt: string; updatedAt: string; resolvedBy?: string }
 export interface Reaction { id: string; values: Record<string, string[]> }
 export interface Presence { id: string; name: string; focus: string; lastSeen: number }

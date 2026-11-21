@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.0.10
+
+- Move Agent context permissions into the composer and generate private inline answers with `@agent` + Enter. Remember permissions per account, room and checkout; share answers only through **Share with room**.
+- Add missing-context checks, private retryable errors, request cancellation, stale-response protection and duplicate-share handling.
+- Prevent duplicate room names, add owner-only room deletion and member removal, and add **Exit room** with ownership transfer. Send chat messages with Enter and insert new lines with Shift+Enter.
+
 ## 1.0.9
 
 Add native desktop voice recording with a default/selectable microphone, local preview, explicit send/discard, upload progress, and Nexconn voice delivery and history. Preserve text drafts and room/thread destinations, limit clips to 1?60 seconds, and stop capture when the owning view hides or closes.

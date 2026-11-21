@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.0.12
+
+- Fix invisible voice-message waveform bars by defining their heights in the stylesheet, compatible with VS Code's webview security policy. Improve waveform contrast.
+- Make message actions compact with individual hover highlights instead of an outer box.
+
 ## 1.0.11
 
 - Replace the browser voice-message controls with a compact player featuring play/pause, seekable waveform-style progress, elapsed/total time, playback speeds and retryable playback errors.

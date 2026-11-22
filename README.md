@@ -4,6 +4,27 @@
 
 Built for the **NexConn Hackathon**. CodeJam gives a development team a shared conversation space connected to the project they are working on.
 
+[Install for VS Code](https://marketplace.visualstudio.com/items?itemName=CodeJam.codejam-workspace) · [Try the demo workflow](#a-quick-demo-for-judges) · [NexConn integration](#how-we-use-nexconn)
+
+![CodeJam workspace with live team chat beside the code editor](codejam/docs/images/workspace.jpg)
+
+<p align="center"><sub>Team chat alongside the code. Screenshots use fictional demo accounts.</sub></p>
+
+<table>
+  <tr>
+    <td width="50%" valign="top">
+      <a href="codejam/docs/images/shared-code.jpg"><img src="codejam/docs/images/shared-code.jpg" alt="A shared code reference with its file path, selected lines, branch, and revision" width="100%"></a>
+      <br><strong>Share the code, with its context.</strong><br>
+      A reference keeps the selected excerpt, file, branch, and revision together.
+    </td>
+    <td width="50%" valign="top">
+      <a href="codejam/docs/images/decisions.jpg"><img src="codejam/docs/images/decisions.jpg" alt="An accepted team decision linked to its original room message" width="100%"></a>
+      <br><strong>Keep the reasoning easy to find.</strong><br>
+      Saved decisions retain the original conversation and implementation links.
+    </td>
+  </tr>
+</table>
+
 ## The problem
 
 A teammate shares a function in chat. Someone else cannot open it because their checkout lives in a different folder or uses a fork. The conversation moves to a call, the team agrees on a fix, and the reasoning disappears into message history.

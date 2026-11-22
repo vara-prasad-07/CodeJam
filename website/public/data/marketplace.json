@@ -1,0 +1,55 @@
+{
+  "installs": 5,
+  "version": "1.0.17",
+  "asOf": "2026-11-22",
+  "source": "https://marketplace.visualstudio.com/items?itemName=CodeJam.codejam-workspace",
+  "dailyAcquisition": [
+    {
+      "date": "2026-11-19",
+      "installs": 4,
+      "pageViews": 7
+    },
+    {
+      "date": "2026-11-20",
+      "installs": 1,
+      "pageViews": 2
+    },
+    {
+      "date": "2026-11-21",
+      "installs": 0,
+      "pageViews": 2
+    },
+    {
+      "date": "2026-11-22",
+      "installs": 0,
+      "pageViews": 4
+    }
+  ],
+  "history": [
+    {
+      "date": "2026-11-19",
+      "installs": 4
+    },
+    {
+      "date": "2026-11-20",
+      "installs": 5
+    },
+    {
+      "date": "2026-11-21",
+      "installs": 5
+    },
+    {
+      "date": "2026-11-22",
+      "installs": 5
+    }
+  ],
+  "analyticsSource": "publisher-export",
+  "report": {
+    "file": "CodeJam.codejam-workspace-report.xlsx",
+    "timezone": "UTC",
+    "start": "2026-11-19",
+    "end": "2026-11-22",
+    "installs": 5,
+    "pageViews": 15
+  }
+}

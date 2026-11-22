@@ -1,0 +1,2 @@
+Reference: https://www.getsymmetry.com/
+Observed styling: light #F5F3F2 / #fdfcfa surfaces, warm ink #2e2926, sky blue #6CBEE4, centered oversized sans-serif typography, generous whitespace, floating visual elements, product-first storytelling. Reinterpreted for CodeJam; no proprietary assets copied.
